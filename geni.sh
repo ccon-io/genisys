@@ -11,7 +11,6 @@ declare -r OPENSSL='/usr/bin/openssl'
 declare -r CATALYST='/usr/bin/catalyst'
 declare -r EC2_BUNDLE_IMAGE='/usr/bin/ec2-bundle-image'
 
-declare -r PID_FILE='/run/genisys/genisys.pid'
 
 declare -ri CPU_COUNT=$(nproc)
 declare -i SCRIPT_SCOPE='0'
@@ -19,29 +18,29 @@ declare -i VERBOSITY='0'
 declare -i DEBUG='0'
 declare -i CLEAR_CCACHE='0'
 declare -i QUIET_OUTPUT='0'
+declare -i NO_MULTILIB='0'
+declare -i SELINUX='0'
 
 declare -r COLOUR_RED='\033[0;31m'
 declare -r COLOUR_GREEN='\033[0;32m'
 declare -r COLOUR_RST='\033[0m'
 
 declare BUILD_TARGET=""
+declare BUILD_VERSION=""
 declare -i BUILD_TARGET_STAGE=""
 
 USERS=""
-NO_MULTILIB='0'
-SELINUX='0'
-
-TIME_NOW=$(date +%s)
-RUN_ID=${TIME_NOW}
 
 CATALYST_ARGS=""
 CATALYST_CONFIG_DIR='/etc/catalyst'
 CATALYST_CONFIG="${CATALYST_CONFIG_DIR}/catalyst.conf"
 CATALYST_CONFIG_KERNCACHE="${CATALYST_CONFIG_DIR}/catalyst-kerncache.conf"
 CATALYST_BASE_DIR="$(grep ^storedir ${CATALYST_CONFIG}|cut -d\" -f2)"
-CATALYST_BUILD_DIR="${CATALYST_BASE_DIR}/builds"
+CATALYST_BUILD_DIR_BASE="${CATALYST_BASE_DIR}/builds"
 CATALYST_TEMPLATE_DIR=${CATALYST_CONFIG_DIR}/templates
 CATALYST_TMP_DIR="${CATALYST_BASE_DIR}/tmp"
+
+declare -r PID_FILE="${CATALYST_TMP_DIR}/genisys.pid"
 
 CATALYST_LOG_DIR="$(grep ^port_logdir ${CATALYST_CONFIG}|cut -d\" -f2)"
 CATALYST_SNAPSHOT_DIR="$(grep ^snapshot_cache ${CATALYST_CONFIG}|cut -d\" -f2)"
@@ -68,15 +67,15 @@ die () {
 
 usage () {
   log 1 "Usage:"
-  echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage)\n\t\t\t-A { amd64 | x86 } \t\t\t-- Architecture we are building on\n\t\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t\t-N { myName }  \t\t\t\t-- Name / Unique Identifier of this build\n\t\t\t-P { hardened | gentoo } \t\t\t-- Base profile for this build\n"
-  echo -e "\tOptional args:\t-a [clear autoresume] -c [clear ccache] -d [debug] -k [enable kerncache] -n [no-multilib] -p [purge] -q [quiet] -s [enable selinux] -v [increment verbosity]"
+  echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage)\n\t\t-A { amd64 | x32 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | gentoo } \t\t-- Base profile for this build\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch"
+  echo -e "\n\tOptional args:\t-a [clear autoresume] -c [clear ccache] -d [debug] -k [enable kerncache] -n [no-multilib] -p [purge] -q [quiet] -s [enable selinux] -v [increment verbosity]"
   echo
 }
 
 log () {
+  prefix=$(printf "%${SCRIPT_SCOPE}s")
   case $1 in
     1)
-      prefix=$(printf "%${SCRIPT_SCOPE}s")
       printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
     ;;
     2)
@@ -122,6 +121,30 @@ cleanUp () {
   [[ -f ${PID_FILE} ]] && rm ${PID_FILE}
 }
 
+verifyObject () {
+  local retVal=0
+  case $1 in
+    dir)
+      if [[ ! -d ${2} ]] 
+      then
+        mkdir -p ${2}
+        retVal=$?
+        (( retVal == 0 )) || log 2 "Problems encountered creating: ${2}"
+      fi
+    ;;
+    file)
+      if [[ ! -f ${2} ]] 
+      then
+        touch ${2}
+        retVal=$?
+        (( retVal == 0 )) || log 2 "Problems encountered creating: ${2}"
+      fi
+    ;;
+  esac
+
+  return ${retVal}
+}
+
 bundleLogs () {
   local SCRIPT_SCOPE='1'
   local CATALYST_LOGS=()
@@ -139,10 +162,11 @@ bundleLogs () {
     CATALYST_LOGS+=" $(find ${CATALYST_LOG_DIR} -type f -not -path "*/archive/*" -not -path "*/failed/*" -name ${mask})"
   done
   
-  [[ -d ${CATALYST_LOG_DIR}/archive ]] || mkdir -p ${CATALYST_LOG_DIR}/archive
+  verifyObject 'dir' "${CATALYST_LOG_DIR}/archive" || die "Could not create archive dir: ${CATALYST_LOG_DIR}/archive" '1'
+
   case $1 in
     1)
-      CATALYST_LOGS+=" ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE}"
+      CATALYST_LOGS+=" ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       log 1 "Compressing logs"
       tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}.tgz -C ${CATALYST_BUILD_DIR} ${CATALYST_LOGS[@]} &> /dev/null
       (( $? == 0 )) && rm -rf ${CATALYST_LOGS[@]}
@@ -191,19 +215,19 @@ verifyTemplates () {
 mangleTemplate () {
   template="${2}"
   var_names=( "${3}" )
-  touch ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE} || return 1
+  touch ${CATALYST_BUILD_DIR}/${SPEC_FILE} || return 1
 
   local SCRIPT_SCOPE='1'
   log '1' "Mangling template: ${template}"
   
   if [[ "$1" == "overwrite" ]] 
   then
-    cp ${CATALYST_TEMPLATE_DIR}/${template} ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE}
+    cp ${CATALYST_TEMPLATE_DIR}/${template} ${CATALYST_BUILD_DIR}/${SPEC_FILE}
     (( $? == 0 )) || return 1
   fi
   if [[ "$1" == "append" ]] 
   then
-    cat ${CATALYST_TEMPLATE_DIR}/${template} >> ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE}
+    cat ${CATALYST_TEMPLATE_DIR}/${template} >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
     (( $? == 0 )) || return 1
   fi
 
@@ -212,10 +236,10 @@ mangleTemplate () {
     local SCRIPT_SCOPE='2'
     (( VERBOSITY > 0 )) && log '1' "Processing: $var"
     var_name=${var}
-    grep $var ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE} &> /dev/null || continue
+    grep $var ${CATALYST_BUILD_DIR}/${SPEC_FILE} &> /dev/null || continue
     var_value=${!var}
     [[ "${var_value}" =~ '/' ]] && var_value=$(echo ${var_value}|sed 's/\//\\\//g')
-    sed -i "s/###${var_name}###/${var_value}/g" ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE} &> /dev/null
+    sed -i "s/###${var_name}###/${var_value}/g" ${CATALYST_BUILD_DIR}/${SPEC_FILE} &> /dev/null
     (( $? == 0 )) || return 1
   done
 }
@@ -224,15 +248,17 @@ fetchRemote () {
   local method="$1"
   local url="$2"
   (( ${#@} == 3 )) && local dir="$3"
+
+  log '3' "Fetching: ${url} "
   case ${method} in
     simple)
-      ${WGET} --directory-prefix=${dir} ${url} &>/dev/null
+      ${WGET} --directory-prefix=${dir} ${url} &>/dev/null &
     ;;
     print)
-      ${CURL} -s ${url}
+      ${CURL} -s ${url} &
     ;;
     parallel)
-      ${LFTP} -c pget -O ${dir} ${url} &>/dev/null
+      ${LFTP} -c pget -O ${dir} ${url} &>/dev/null &
     ;;
     *)
       log '2' "Method: ${method}, not understood"
@@ -240,6 +266,7 @@ fetchRemote () {
     ;;
   esac
 
+  jobWait $!
   retVal=$?
   (( retVal > 0 )) && log '2' "Could not fetch ${url} to ${dir}" && return ${retVal}
   return 0
@@ -286,6 +313,13 @@ jobWait() {
   local delay=0.15
   local spinstr='|/-\'
 
+  checkPid $pid
+  if (( $? > 0 ))
+  then
+    echo
+    return
+  fi
+
   while (( $? == 0 ))
   do
     local temp=${spinstr#?}
@@ -301,7 +335,7 @@ jobWait() {
 }
 
 awsBundleImage () {
-  mkdir -p /${IMAGE_STORE}/ami/${REL_NAME}/${BUILD_VER}/ 
+  verifyObject 'dir' "/${IMAGE_STORE}/ami/${REL_NAME}/${BUILD_VER}/"
   ${EC2_BUNDLE_IMAGE} -k ${CATALYST_CONFIG_DIR}/keys/key.pem -c /etc/ec2/amitools/cert-ec2.pem  -u ${AWS_ACCOUNT_ID} -i ${CATALYST_BASE_DIR}/iso/${REL_NAME}-${SUB_ARCH}-${REL_TYPE}-installer-${BUILD_VER}.iso -d ${IMAGE_STORE}/ami/${REL_NAME}/${BUILD_VER}/ -r x86_64
 }
 
@@ -332,17 +366,17 @@ runCatalyst () {
     ;;
     build)
       CATALYST_ARGS="${CATALYST_ARGS} -f"
-      log '1' "Building with args: ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE}"
+      log '1' "Building with args: ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       if (( QUIET_OUTPUT == 1 ))
       then
         local SCRIPT_SCOPE='2'
         log '3' "Running silently..."
-        ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE}" 2> ${SCRIPT_ERR} &> /dev/null ) &
+        ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}" 2> ${SCRIPT_ERR} &> /dev/null ) &
         jobWait $!
         retVal=$?
         (( retVal > 0 )) && cat ${SCRIPT_OUT} && log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
       else
-        ${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE}
+        ${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}
         retVal=$?
       fi
 
@@ -358,8 +392,6 @@ prepCatalystLiveCD () {
 
   STAGE1_TEMPLATES=( "${SPEC_FILE}.header.template" "${SPEC_FILE}.pkg.template" "${SPEC_FILE}.use.template" )
   STAGE2_TEMPLATES=( "${SPEC_FILE}.header.template" "${SPEC_FILE}.boot.template" "${SPEC_FILE}.post.template" )
-
-  SRC_PATH_PREFIX="livecd-${SRC_PATH_PREFIX}"
 
   if (( ${BUILD_TARGET_STAGE} == '1' ))
   then
@@ -382,12 +414,12 @@ prepCatalystStage () {
 }
 
 prepCatalystStage1 () {
+  SEED_STAGE="${DIST_STAGE3_BZ2}"
   for file in "${DIST_STAGE3_DIGESTS}" "${DIST_STAGE3_CONTENTS}" "${DIST_STAGE3_ASC}" "${DIST_STAGE3_BZ2}"
   do
     if [[ ! -f ${CATALYST_SNAPSHOT_DIR}/${file} ]] 
     then
-      log '1' "Fetching $file"
-      fetchRemote 'simple' "${DIST_BASE_URL}/${DIST_STAGE3_PATH}/${file}" "${CATALYST_SNAPSHOT_DIR}"
+      fetchRemote 'parallel' "${DIST_BASE_URL}/${DIST_STAGE3_PATH_BASE}/${file}" "${CATALYST_SNAPSHOT_DIR}"
       (( $? == 0 )) || die "Failed to fetch: ${file}" "$?"
     fi
   done
@@ -422,6 +454,8 @@ prepCatalyst () {
 
   echo $$ > ${PID_FILE}
 
+  CATALYST_BUILD_DIR="${CATALYST_BUILD_DIR_BASE}/${BUILD_NAME}/${BUILD_TARGET}"
+
   PORTAGE_SNAPSHOT_DATE=$(date +%s -r ${CATALYST_SNAPSHOT_DIR}/portage-latest.tar.bz2)
   PORTAGE_SNAPSHOT_AGE=$(( TIME_NOW - PORTAGE_SNAPSHOT_DATE ))
   PORTAGE_SNAPSHOT_AGE_MAX='14400'
@@ -434,26 +468,28 @@ prepCatalyst () {
   REL_SNAPSHOT='latest'
 
   DIST_BASE_URL='http://distfiles.gentoo.org/releases'
-  DIST_STAGE3_PATH="${SUB_ARCH}/autobuilds/current-stage3-${SUB_ARCH}"
+  DIST_STAGE3_PREFIX="stage3-${SUB_ARCH}"
+  DIST_STAGE3_PATH_BASE="${SUB_ARCH}/autobuilds"
   DIST_STAGE3_MANIFEST="latest-stage3-${SUB_ARCH}"
 
   if [[ ${REL_TYPE} == 'hardened' ]] 
   then
-    DIST_STAGE3_PATH="${DIST_STAGE3_PATH}-${REL_TYPE}"
-    DIST_STAGE3_MANIFEST="latest-stage3-${SUB_ARCH}-${REL_TYPE}"
-    (( NO_MULTILIB == 1 )) && DIST_STAGE3_PATH="${DIST_STAGE3_PATH}+nomultilib"
+    DIST_STAGE3_MANIFEST="latest-${DIST_STAGE3_PREFIX}"
     (( NO_MULTILIB == 1 )) && DIST_STAGE3_MANIFEST="${DIST_STAGE3_MANIFEST}+nomultilib"
   else
-    (( NO_MULTILIB == 1 )) && DIST_STAGE3_PATH="${DIST_STAGE3_PATH}-nomultilib"
     (( NO_MULTILIB == 1 )) && DIST_STAGE3_MANIFEST="${DIST_STAGE3_MANIFEST}-nomultilib"
   fi
 
   DIST_STAGE3_MANIFEST="${DIST_STAGE3_MANIFEST}.txt"
   DIST_STAGE3_LATEST="$(fetchRemote 'print' ${DIST_BASE_URL}/${SUB_ARCH}/autobuilds/${DIST_STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
-  DIST_STAGE3_PREFIX="stage3-${SUB_ARCH}"
+
+  [[ -z ${BUILD_VERSION} ]] && BUILD_VERSION="${DIST_STAGE3_LATEST}"
+
+  DIST_STAGE3_PATH_BASE="${DIST_STAGE3_PATH_BASE}/${BUILD_VERSION}"
 
   if [[ ${REL_TYPE} == 'hardened' ]] 
   then
+    DIST_STAGE3_PATH_BASE="${DIST_STAGE3_PATH_BASE}/hardened"
     DIST_STAGE3_PREFIX="${DIST_STAGE3_PREFIX}-${REL_TYPE}"
     (( NO_MULTILIB == 1 )) && DIST_STAGE3_PREFIX="${DIST_STAGE3_PREFIX}+nomultilib"
   else
@@ -464,6 +500,9 @@ prepCatalyst () {
   DIST_STAGE3_CONTENTS="${DIST_STAGE3_PREFIX}-${DIST_STAGE3_LATEST}.tar.bz2.CONTENTS"
   DIST_STAGE3_ASC="${DIST_STAGE3_PREFIX}-${DIST_STAGE3_LATEST}.tar.bz2.DIGESTS.asc"
   DIST_STAGE3_BZ2="${DIST_STAGE3_PREFIX}-${DIST_STAGE3_LATEST}.tar.bz2"
+
+  DIST_STAGE1_BZ2="${DIST_STAGE3_BZ2/stage3/stage1}"
+  SEED_STAGE="${DIST_STAGE1_BZ2}"
 
   VERSION_STAMP="${REL_TYPE}-${DIST_STAGE3_LATEST}"
   (( NO_MULTILIB == 1 )) && VERSION_STAMP="${REL_TYPE}+nomultilib-${DIST_STAGE3_LATEST}"
@@ -494,7 +533,8 @@ prepCatalyst () {
     log '1' "Multilib Disabled"
   fi
 
-  [[ -d ${CATALYST_BUILD_DIR} ]] || mkdir -p ${CATALYST_BUILD_DIR}
+  verifyObject 'dir' "${CATALYST_BUILD_DIR}" || die "Could not create build dir: ${CATALYST_BUILD_DIR}" '1'
+
 
   if [[ ${REL_TYPE} == 'hardened' ]]
   then
@@ -504,7 +544,7 @@ prepCatalyst () {
     (( NO_MULTILIB == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-nomultilib"
   fi
 
-  SRC_PATH="${BUILD_NAME}/${SRC_PATH_PREFIX}-${DIST_STAGE3_LATEST}"
+  SRC_PATH="${BUILD_NAME}/${BUILD_TARGET}/${SRC_PATH_PREFIX}-${DIST_STAGE3_LATEST}"
 
   verifyTemplates "${SPEC_FILE}" || die "Could not verify templates" '1'
   mangleTemplate 'overwrite' "${SPEC_FILE}.header.template" "SUB_ARCH VERSION_STAMP REL_TYPE REL_PROFILE REL_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT USERS BUILD_TARGET"
@@ -512,14 +552,14 @@ prepCatalyst () {
 
   if ( (( ${BUILD_TARGET_STAGE} == '1' )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == '4' )) && [[ ${BUILD_TARGET} == 'stage' ]] )
   then
-    cat ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep >> ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE}
+    cat ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
   fi
 
   if ( (( ${BUILD_TARGET_STAGE} == '2' )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == '4' )) && [[ ${BUILD_TARGET} == 'stage' ]] )
   then
     mangleTemplate 'append' "${SPEC_FILE}.boot.template" "REL_TYPE SUB_ARCH BUILD_TARGET TARGET_KERNEL"
     (( $? == 0 )) || die "Could not manipulate spec file: boot" '1'
-    cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.post.template >> ${CATALYST_BUILD_DIR}/${BUILD_NAME}/${SPEC_FILE}
+    cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.post.template >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
     (( $? == 0 )) || die "Could not manipulate spec file: post" '1'
   fi
 
@@ -533,8 +573,7 @@ prepCatalyst () {
     (( $? > 0 )) &&  log '2' "Failed to clear ccache"
   fi
 
-  ### Not happy bout this guy vvv --- should probably structure SRC_PATH better
-  [[ ${BUILD_TARGET} == "livecd" ]] && [[ ! -f ${CATALYST_BUILD_DIR}/${BUILD_NAME}/livecd-${DIST_STAGE3_BZ2} ]] && cp ${CATALYST_SNAPSHOT_DIR}/${DIST_STAGE3_BZ2} ${CATALYST_BUILD_DIR}/${BUILD_NAME}/livecd-${DIST_STAGE3_BZ2}
+  [[ ! -f ${CATALYST_BUILD_DIR}/${SEED_STAGE} ]] && cp ${CATALYST_SNAPSHOT_DIR}/${SEED_STAGE} ${CATALYST_BUILD_DIR}/
 
   runCatalyst 'build' || die "Catalyst failed to build" "$?"
 }
@@ -551,126 +590,133 @@ burnAmi () {
 
 burnIso () {
   #Something should be here
-  #mkisofs -J -R -l  -V "${BUILD_NAME}" -o ${CATALYST_BUILD_DIR}/${BUILD_NAME}/nameofthething -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table ${CATALYST_BUILD_DIR}/${BUILD_NAME}/livecd-stage2-
+  #mkisofs -J -R -l  -V "${BUILD_NAME}" -o ${CATALYST_BUILD_DIR}/nameofthething -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table ${CATALYST_BUILD_DIR}/livecd-stage2-
   echo "Burn"
 }
 
-(( ${#@} < 1 )) && usage && die "No arguments supplied" '1'
+main () {
+  TIME_NOW=$(date +%s)
+  RUN_ID=${TIME_NOW}
 
-while getopts ":A:K:N:P:S:T:V:acdknpqsv" opt
-do
-  case ${opt} in
-    A)
-      SUB_ARCH="${OPTARG}"
-    ;;
-    K)
-      TARGET_KERNEL="${OPTARG}"
-    ;;
-    N)
-      BUILD_NAME="${OPTARG}"
-    ;;
-    P)
-      REL_TYPE="${OPTARG}"
-    ;;
-    S)
-      BUILD_TARGET_STAGE="${OPTARG}"
-    ;;
-    T)
-      case ${OPTARG} in
-        ami)
-          BUILD_TARGET='ami'
-        ;;
-        iso)
-          BUILD_TARGET='iso'
-        ;;
-        livecd)
-          BUILD_TARGET='livecd'
-        ;;
-        stage)
-          BUILD_TARGET='stage'
-        ;;
-        \?)
-          die "Unknown flag: -$OPTARG"
-        ;;
-        :)
-          die "Missing parameter for flag: -$OPTARG"
-        ;;
-        *)
-          die "Invalid Target specified: $OPTARG, should be one of [ iso, ami, stage ]" '1'
-        ;;
-      esac
-    ;;
-    V)
-      FETCH_VERSION="${OPTARG}"
-    ;;
-    a)
-      CATALYST_ARGS="${CATALYST_ARGS} -a"
-    ;;
-    c)
-      CLEAR_CCACHE='1'
-    ;;
-    d)
-      CATALYST_ARGS="${CATALYST_ARGS} -d"
-    ;;
-    k)
-      CATALYST_CONFIG="${CATALYST_CONFIG_KERNCACHE}"
-      CATALYST_ARGS="${CATALYST_ARGS} -c ${CATALYST_CONFIG}"
-    ;;
-    n)
-      NO_MULTILIB='1'
-    ;;
-    p)
-      CATALYST_ARGS="${CATALYST_ARGS} -p -a"
-    ;;
-    q)
-      QUIET_OUTPUT='1'
-    ;;
-    s)
-      SELINUX='1'
-    ;;
-    v)
-      CATALYST_ARGS="${CATALYST_ARGS} -v"
-      (( ++VERBOSITY ))
-    ;;
-    \?)
-      die "Unknown option: -$OPTARG" '1'
-    ;;
-    :)
-      die "Missing parameter for flag: -$OPTARG" '1'
-    ;;
-    *)
-      die "Invalid option specified: $OPTARG" '1'
-    ;;
-  esac
-done
+  (( ${#@} < 1 )) && usage && die "No arguments supplied" '1'
 
-if [[ ${BUILD_TARGET} == "livecd" ]]
-then
-  [[ ${BUILD_TARGET_STAGE} == [1-2] ]] || die "Need number of stage to build [1-2]" '1'
-else
-  [[ ${BUILD_TARGET_STAGE} == [1-4] ]] || die "Need number of stage to build [1-4]" '1'
-fi 
+  while getopts ":A:K:N:P:S:T:V:acdknpqsv" opt
+  do
+    case ${opt} in
+      A)
+        SUB_ARCH="${OPTARG}"
+      ;;
+      K)
+        TARGET_KERNEL="${OPTARG}"
+      ;;
+      N)
+        BUILD_NAME="${OPTARG}"
+      ;;
+      P)
+        REL_TYPE="${OPTARG}"
+      ;;
+      S)
+        BUILD_TARGET_STAGE="${OPTARG}"
+      ;;
+      T)
+        case ${OPTARG} in
+          ami)
+            BUILD_TARGET='ami'
+          ;;
+          iso)
+            BUILD_TARGET='iso'
+          ;;
+          livecd)
+            BUILD_TARGET='livecd'
+          ;;
+          stage)
+            BUILD_TARGET='stage'
+          ;;
+          \?)
+            die "Unknown flag: -$OPTARG"
+          ;;
+          :)
+            die "Missing parameter for flag: -$OPTARG"
+          ;;
+          *)
+            die "Invalid Target specified: $OPTARG, should be one of [ iso, ami, stage ]" '1'
+          ;;
+        esac
+      ;;
+      V)
+        BUILD_VERSION="${OPTARG}"
+      ;;
+      a)
+        CATALYST_ARGS="${CATALYST_ARGS} -a"
+      ;;
+      c)
+        CLEAR_CCACHE='1'
+      ;;
+      d)
+        CATALYST_ARGS="${CATALYST_ARGS} -d"
+      ;;
+      k)
+        CATALYST_CONFIG="${CATALYST_CONFIG_KERNCACHE}"
+        CATALYST_ARGS="${CATALYST_ARGS} -c ${CATALYST_CONFIG}"
+      ;;
+      n)
+        NO_MULTILIB='1'
+      ;;
+      p)
+        CATALYST_ARGS="${CATALYST_ARGS} -p -a"
+      ;;
+      q)
+        QUIET_OUTPUT='1'
+      ;;
+      s)
+        SELINUX='1'
+      ;;
+      v)
+        CATALYST_ARGS="${CATALYST_ARGS} -v"
+        (( ++VERBOSITY ))
+      ;;
+      \?)
+        die "Unknown option: -$OPTARG" '1'
+      ;;
+      :)
+        die "Missing parameter for flag: -$OPTARG" '1'
+      ;;
+      *)
+        die "Invalid option specified: $OPTARG" '1'
+      ;;
+    esac
+  done
 
-START_TIME=$(date +%s)
+  if [[ ${BUILD_TARGET} == "livecd" ]]
+  then
+    [[ ${BUILD_TARGET_STAGE} == [1-2] ]] || die "Need number of stage to build [1-2]" '1'
+  else
+    [[ ${BUILD_TARGET_STAGE} == [1-4] ]] || die "Need number of stage to build [1-4]" '1'
+  fi 
 
-(( VERBOSITY > 0 )) && debug
+  START_TIME=$(date +%s)
 
-trap "echo && bundleLogs '2' && die 'SIGINT Caught' 2" SIGINT 
-trap "echo && bundleLogs '2' && die 'SIGTERM Caught' 2" SIGTERM
-trap "echo && bundleLogs '2' && die 'SIGHUP Caught' 2" SIGHUP
-trap "cleanUp" EXIT
-trap "(( ++VERBOSITY )) && debug" SIGUSR1
-trap "DEBUG=1 && debug" SIGUSR2
+  (( VERBOSITY > 0 )) && debug
 
-if [[ ${BUILD_TARGET} == "livecd" ]] || [[ ${BUILD_TARGET} == "stage" ]]
-then
-  prepCatalyst
-elif [[ ${BUILD_TARGET} == "ami" ]]
-then
-  burnAmi
-elif [[ ${BUILD_TARGET} == "iso" ]]
-then
-  burnIso
-fi
+  trap "echo && bundleLogs '2' && die 'SIGINT Caught' 2" SIGINT 
+  trap "echo && bundleLogs '2' && die 'SIGTERM Caught' 2" SIGTERM
+  trap "echo && bundleLogs '2' && die 'SIGHUP Caught' 2" SIGHUP
+  trap "cleanUp" EXIT
+  trap "(( ++VERBOSITY )) && debug" SIGUSR1
+  trap "DEBUG=1 && debug" SIGUSR2
+
+  if [[ ${BUILD_TARGET} == "livecd" ]] || [[ ${BUILD_TARGET} == "stage" ]]
+  then
+    prepCatalyst
+  elif [[ ${BUILD_TARGET} == "ami" ]]
+  then
+    burnAmi
+  elif [[ ${BUILD_TARGET} == "iso" ]]
+  then
+    burnIso
+  fi
+}
+
+main $@
 
 die "Fin." '0'
