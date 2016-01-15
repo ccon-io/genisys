@@ -1,0 +1,4 @@
+boot/kernel: gentoo
+boot/kernel/gentoo/sources: ###REL_TYPE###-sources
+boot/kernel/gentoo/config: /etc/catalyst/kernels/###SUB_ARCH###-###REL_TYPE###-###BUILD_TARGET###-###TARGET_KERNEL###.config
+boot/kernel/gentoo/use: atm usb

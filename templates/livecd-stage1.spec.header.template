@@ -1,0 +1,9 @@
+subarch: ###SUB_ARCH###
+target: livecd-stage1
+version_stamp: ###VERSION_STAMP###
+rel_type: ###BUILD_NAME###
+profile: ###REL_PROFILE###
+snapshot: ###REL_SNAPSHOT###
+source_subpath: ###SRC_PATH###
+portage_confdir: ###PORTAGE_OVERLAY###
+kerncache_path: ###CATALYST_BASE_DIR###/kerncache/###BUILD_NAME###
