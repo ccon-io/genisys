@@ -103,18 +103,23 @@ debug () {
 }
 
 checkPid () {
+  PID_ALIVE=0
   kill -0 $1 &> /dev/null
-  return $?
+  (( $? == 0 )) && PID_ALIVE=1
+  return 0
 }
 
 cleanUp () {
   for pid in $(pgrep -P $$)
   do  
-    checkPid $pid || continue
+    checkPid $pid 
+    (( PID_ALIVE == 0 )) && continue
     kill $pid &> /dev/null
-    checkPid $pid || continue
-    (( $? == 0 )) && kill -9 $pid &> /dev/null
-    checkPid $pid || continue
+    checkPid $pid
+    (( PID_ALIVE == 0 )) && continue
+    kill -9 $pid &> /dev/null
+    checkPid $pid 
+    (( PID_ALIVE == 0 )) && continue
     log 2 "Zombie Process Identified: $pid (take its head off)"
   done
 
@@ -249,7 +254,7 @@ fetchRemote () {
   local url="$2"
   (( ${#@} == 3 )) && local dir="$3"
 
-  log '3' "Fetching: ${url} "
+  log '3' "Fetching: $(basename ${url}) "
   case ${method} in
     simple)
       ${WGET} --directory-prefix=${dir} ${url} &>/dev/null &
@@ -314,10 +319,9 @@ jobWait() {
   local spinstr='|/-\'
 
   checkPid $pid
-  if (( $? > 0 ))
+  if (( PID_ALIVE > 0 ))
   then
-    echo
-    return
+    return 0
   fi
 
   while (( $? == 0 ))
@@ -328,8 +332,9 @@ jobWait() {
     sleep $delay
     printf "\b\b\b\b\b\b"
     checkPid $pid
+    (( PID_ALIVE == 0 )) || break
   done
-  printf "    \b\b\b\b\n"
+  printf "    \b\b\b\b\n\n"
   wait $pid
   return $?
 }
@@ -474,7 +479,7 @@ prepCatalyst () {
 
   if [[ ${REL_TYPE} == 'hardened' ]] 
   then
-    DIST_STAGE3_MANIFEST="latest-${DIST_STAGE3_PREFIX}"
+    DIST_STAGE3_MANIFEST="latest-${DIST_STAGE3_PREFIX}-hardened"
     (( NO_MULTILIB == 1 )) && DIST_STAGE3_MANIFEST="${DIST_STAGE3_MANIFEST}+nomultilib"
   else
     (( NO_MULTILIB == 1 )) && DIST_STAGE3_MANIFEST="${DIST_STAGE3_MANIFEST}-nomultilib"
