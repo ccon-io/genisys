@@ -347,9 +347,9 @@ awsBundleImage () {
 runCatalyst () {
   local method="$1"
   local SCRIPT_SCOPE='1'
-  local SCRIPT_OUT="${CATALYST_LOG_DIR}/catalyst-${method}-${RUN_ID}.info"
-  local SCRIPT_ERR="${CATALYST_LOG_DIR}/catalyst-${method}-${RUN_ID}.err"
-  local SCRIPT_FLAGS="-a ${SCRIPT_OUT} -e -q -c"
+  local SCRIPT_OUT="${CATALYST_LOG_DIR}/catalyst-${BUILD_TARGET}-${method}-${RUN_ID}.info"
+  local SCRIPT_ERR="${CATALYST_LOG_DIR}/catalyst-${BUILD_TARGET}-${method}-${RUN_ID}.err"
+  local SCRIPT_FLAGS="-f -e -q -c"
 
   case ${method} in
     snapshot)
@@ -359,7 +359,7 @@ runCatalyst () {
       then
         local SCRIPT_SCOPE='2'
         log '3' "Running silently... "
-        ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} latest" 2> ${SCRIPT_ERR} &> /dev/null ) &
+        script ${SCRIPT_FLAGS} "'${CATALYST} ${CATALYST_ARGS} latest'" ${SCRIPT_OUT}  2> ${SCRIPT_ERR} &> /dev/null &
         jobWait $!
         retVal=$?
         (( retVal > 0 )) && cat ${SCRIPT_OUT} && log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
@@ -376,7 +376,7 @@ runCatalyst () {
       then
         local SCRIPT_SCOPE='2'
         log '3' "Running silently..."
-        ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}" 2> ${SCRIPT_ERR} &> /dev/null ) &
+        script ${SCRIPT_FLAGS} "'${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}'" ${SCRIPT_OUT} 2> ${SCRIPT_ERR} &> /dev/null &
         jobWait $!
         retVal=$?
         (( retVal > 0 )) && cat ${SCRIPT_OUT} && log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
@@ -574,7 +574,7 @@ prepCatalyst () {
   then
     local SCRIPT_SCOPE='1'
     log '1' "Clearing CCache"
-    rm -rf ${CATALYST_TMP_DIR}/${SRC_PATH}/var/ccache/*
+    rm -rf ${CATALYST_TMP_DIR}/$(basename ${SEED_STAGE} .tar.bz2)/var/ccache/*
     (( $? > 0 )) &&  log '2' "Failed to clear ccache"
   fi
 
@@ -652,23 +652,23 @@ main () {
         BUILD_VERSION="${OPTARG}"
       ;;
       a)
-        CATALYST_ARGS="${CATALYST_ARGS} -a"
+        [[ ! ${CATALYST_ARGS} =~ "-a" ]] && CATALYST_ARGS="${CATALYST_ARGS} -a"
       ;;
       c)
         CLEAR_CCACHE='1'
       ;;
       d)
-        CATALYST_ARGS="${CATALYST_ARGS} -d"
+        [[ ! ${CATALYST_ARGS} =~ "-d" ]] && CATALYST_ARGS="${CATALYST_ARGS} -d"
       ;;
       k)
         CATALYST_CONFIG="${CATALYST_CONFIG_KERNCACHE}"
-        CATALYST_ARGS="${CATALYST_ARGS} -c ${CATALYST_CONFIG}"
+        [[ ! ${CATALYST_ARGS} =~ "-c" ]] && CATALYST_ARGS="${CATALYST_ARGS} -c ${CATALYST_CONFIG}"
       ;;
       n)
         NO_MULTILIB='1'
       ;;
       p)
-        CATALYST_ARGS="${CATALYST_ARGS} -p -a"
+        [[ ! ${CATALYST_ARGS} =~ "-p -a" ]] && CATALYST_ARGS="${CATALYST_ARGS} -p -a"
       ;;
       q)
         QUIET_OUTPUT='1'
@@ -677,8 +677,8 @@ main () {
         SELINUX='1'
       ;;
       v)
-        CATALYST_ARGS="${CATALYST_ARGS} -v"
-        (( ++VERBOSITY ))
+        (( VERBOSITY < 5 )) && (( ++VERBOSITY ))
+        (( VERBOSITY == 1 )) && CATALYST_ARGS="${CATALYST_ARGS} -v"
       ;;
       \?)
         die "Unknown option: -$OPTARG" '1'
