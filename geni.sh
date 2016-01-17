@@ -25,11 +25,11 @@ declare -r COLOUR_RED='\033[0;31m'
 declare -r COLOUR_GREEN='\033[0;32m'
 declare -r COLOUR_RST='\033[0m'
 
+declare -i BUILD_TARGET_STAGE=""
 declare BUILD_TARGET=""
 declare BUILD_VERSION=""
-declare -i BUILD_TARGET_STAGE=""
 
-USERS=""
+CATALYST_USERS=""
 
 CATALYST_ARGS=""
 CATALYST_CONFIG_DIR='/etc/catalyst'
@@ -88,7 +88,7 @@ log () {
 }
 
 debug () {
-  if (( VERBOSITY == 2 ))
+  if (( VERBOSITY == 2 )) || (( VERBOSITY >= 4 ))
   then
     set -v 
   elif (( VERBOSITY >= 3 )) || (( DEBUG == 1 ))
@@ -173,7 +173,7 @@ bundleLogs () {
     1)
       CATALYST_LOGS+=" ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       log 1 "Compressing logs"
-      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}.tgz -C ${CATALYST_BUILD_DIR} ${CATALYST_LOGS[@]} &> /dev/null
+      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}.tgz ${CATALYST_LOGS[@]} &> /dev/null
       (( $? == 0 )) && rm -rf ${CATALYST_LOGS[@]}
     ;;
     2)
@@ -204,6 +204,7 @@ verifyTemplates () {
       TEMPLATES=( ${STAGE4_TEMPLATES[@]} )
     ;;
   esac
+
   log '1' "Checking for templates"
   for template in ${TEMPLATES[@]}
   do 
@@ -319,7 +320,7 @@ jobWait() {
   local spinstr='|/-\'
 
   checkPid $pid
-  if (( PID_ALIVE > 0 ))
+  if (( PID_ALIVE == 0 ))
   then
     return 0
   fi
@@ -332,7 +333,7 @@ jobWait() {
     sleep $delay
     printf "\b\b\b\b\b\b"
     checkPid $pid
-    (( PID_ALIVE == 0 )) || break
+    (( PID_ALIVE == 1 )) || break
   done
   printf "    \b\b\b\b\n\n"
   wait $pid
@@ -359,7 +360,7 @@ runCatalyst () {
       then
         local SCRIPT_SCOPE='2'
         log '3' "Running silently... "
-        script ${SCRIPT_FLAGS} "'${CATALYST} ${CATALYST_ARGS} latest'" ${SCRIPT_OUT}  2> ${SCRIPT_ERR} &> /dev/null &
+        ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} latest" ${SCRIPT_OUT}  2> ${SCRIPT_ERR} &> /dev/null ) &
         jobWait $!
         retVal=$?
         (( retVal > 0 )) && cat ${SCRIPT_OUT} && log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
@@ -376,7 +377,7 @@ runCatalyst () {
       then
         local SCRIPT_SCOPE='2'
         log '3' "Running silently..."
-        script ${SCRIPT_FLAGS} "'${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}'" ${SCRIPT_OUT} 2> ${SCRIPT_ERR} &> /dev/null &
+        ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}" ${SCRIPT_OUT} 2> ${SCRIPT_ERR} &> /dev/null ) &
         jobWait $!
         retVal=$?
         (( retVal > 0 )) && cat ${SCRIPT_OUT} && log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
@@ -552,7 +553,7 @@ prepCatalyst () {
   SRC_PATH="${BUILD_NAME}/${BUILD_TARGET}/${SRC_PATH_PREFIX}-${DIST_STAGE3_LATEST}"
 
   verifyTemplates "${SPEC_FILE}" || die "Could not verify templates" '1'
-  mangleTemplate 'overwrite' "${SPEC_FILE}.header.template" "SUB_ARCH VERSION_STAMP REL_TYPE REL_PROFILE REL_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT USERS BUILD_TARGET"
+  mangleTemplate 'overwrite' "${SPEC_FILE}.header.template" "SUB_ARCH VERSION_STAMP REL_TYPE REL_PROFILE REL_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET"
   (( $? == 0 )) || die "Could not manipulate spec file: header" '1'
 
   if ( (( ${BUILD_TARGET_STAGE} == '1' )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == '4' )) && [[ ${BUILD_TARGET} == 'stage' ]] )
@@ -573,7 +574,7 @@ prepCatalyst () {
   if (( CLEAR_CCACHE == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    log '1' "Clearing CCache"
+    log '1' "Clearing CCache: ${CATALYST_TMP_DIR}/$(basename ${SEED_STAGE} .tar.bz2)/var/ccache/"
     rm -rf ${CATALYST_TMP_DIR}/$(basename ${SEED_STAGE} .tar.bz2)/var/ccache/*
     (( $? > 0 )) &&  log '2' "Failed to clear ccache"
   fi
