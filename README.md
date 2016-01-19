@@ -1,6 +1,6 @@
 # genisys
 Gentoo Catalyst Wrapper
 
-genesis:
+genisys:
 ![alt tag](https://raw.github.com/ccon-io/genisys/master/usage.png)
 
