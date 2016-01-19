@@ -1,6 +1,6 @@
 #!/bin/env bash
 
-set -e -u -o pipefail
+set -u -o pipefail
 
 declare -r WGET='/usr/bin/wget'
 declare -r CURL='/usr/bin/curl'
@@ -13,6 +13,7 @@ declare -r EC2_BUNDLE_IMAGE='/usr/bin/ec2-bundle-image'
 
 
 declare -ri CPU_COUNT=$(nproc)
+declare -i BATCH_MODE='0'
 declare -i SCRIPT_SCOPE='0'
 declare -i VERBOSITY='0'
 declare -i DEBUG='0'
@@ -25,13 +26,12 @@ declare -r COLOUR_RED='\033[0;31m'
 declare -r COLOUR_GREEN='\033[0;32m'
 declare -r COLOUR_RST='\033[0m'
 
-declare -i BUILD_TARGET_STAGE=""
+declare BUILD_TARGET_STAGE=""
 declare BUILD_TARGET=""
 declare BUILD_VERSION=""
 
 CATALYST_USERS=""
 
-CATALYST_ARGS=""
 CATALYST_CONFIG_DIR='/etc/catalyst'
 CATALYST_CONFIG="${CATALYST_CONFIG_DIR}/catalyst.conf"
 CATALYST_CONFIG_KERNCACHE="${CATALYST_CONFIG_DIR}/catalyst-kerncache.conf"
@@ -335,7 +335,7 @@ jobWait() {
     checkPid $pid
     (( PID_ALIVE == 1 )) || break
   done
-  printf "    \b\b\b\b\n\n"
+  printf "    \b\b\b\b\n"
   wait $pid
   return $?
 }
@@ -371,7 +371,7 @@ runCatalyst () {
       (( retVal == 0 )) || return "${retVal}"
     ;;
     build)
-      CATALYST_ARGS="${CATALYST_ARGS} -f"
+      [[ ! ${CATALYST_ARGS} =~ "-f" ]] &&  CATALYST_ARGS="${CATALYST_ARGS} -f"
       log '1' "Building with args: ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       if (( QUIET_OUTPUT == 1 ))
       then
@@ -403,6 +403,9 @@ prepCatalystLiveCD () {
   then
     cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.pkg.template > ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep
     cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.use.template >> ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep
+  elif (( ${BUILD_TARGET_STAGE} == '2' ))
+  then
+    SRC_PATH_PREFIX="livecd-${SRC_PATH_PREFIX}"
   fi
 }
 
@@ -421,6 +424,7 @@ prepCatalystStage () {
 
 prepCatalystStage1 () {
   SEED_STAGE="${DIST_STAGE3_BZ2}"
+  log '1' "Checking for stage files"
   for file in "${DIST_STAGE3_DIGESTS}" "${DIST_STAGE3_CONTENTS}" "${DIST_STAGE3_ASC}" "${DIST_STAGE3_BZ2}"
   do
     if [[ ! -f ${CATALYST_SNAPSHOT_DIR}/${file} ]] 
@@ -456,7 +460,13 @@ prepCatalystStage1 () {
 }
 
 prepCatalyst () {
-  (( $UID > 0 )) && die "Catalyst must run with root" '2'
+  START_TIME=$(date +%s)
+  (( $UID > 0 )) && die "Must run with root" '2'
+
+  verifyObject 'dir' "${CATALYST_TMP_DIR}/${BUILD_NAME}" || die "Could not create build dir: ${CATALYST_TMP_DIR}/${BUILD_NAME}" '1'
+
+  mount|grep "${CATALYST_TMP_DIR}" &> /dev/null
+  (( $? == 0 )) && die "Looks like stuff is still mounted in the chroot. This makes pain. Check: mount | grep ${CATALYST_TMP_DIR}" '1'
 
   echo $$ > ${PID_FILE}
 
@@ -518,8 +528,15 @@ prepCatalyst () {
   if (( ${BUILD_TARGET_STAGE} == '1' ))
   then
     SRC_PATH_PREFIX="stage3-${SUB_ARCH}"
-  else
+  elif (( ${BUILD_TARGET_STAGE} == '2' ))
+  then
     SRC_PATH_PREFIX="stage1-${SUB_ARCH}"
+  elif (( ${BUILD_TARGET_STAGE} == '3' ))
+  then
+    SRC_PATH_PREFIX="stage2-${SUB_ARCH}"
+  elif (( ${BUILD_TARGET_STAGE} == '4' ))
+  then
+    SRC_PATH_PREFIX="stage3-${SUB_ARCH}"
   fi
 
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
@@ -574,12 +591,11 @@ prepCatalyst () {
   if (( CLEAR_CCACHE == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    log '1' "Clearing CCache: ${CATALYST_TMP_DIR}/$(basename ${SEED_STAGE} .tar.bz2)/var/ccache/"
-    rm -rf ${CATALYST_TMP_DIR}/$(basename ${SEED_STAGE} .tar.bz2)/var/ccache/*
+    #/var/data/catalyst/tmp/deusOS/livecd/livecd-stage1-amd64-hardened+nomultilib-20160115/var/ccache/
+    log '1' "Clearing CCache: ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/$(basename ${SEED_STAGE} .tar.bz2)/var/ccache/"
+    rm -rf ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/$(basename ${SEED_STAGE} .tar.bz2)/var/ccache/*
     (( $? > 0 )) &&  log '2' "Failed to clear ccache"
   fi
-
-  [[ ! -f ${CATALYST_BUILD_DIR}/${SEED_STAGE} ]] && cp ${CATALYST_SNAPSHOT_DIR}/${SEED_STAGE} ${CATALYST_BUILD_DIR}/
 
   runCatalyst 'build' || die "Catalyst failed to build" "$?"
 }
@@ -600,9 +616,10 @@ burnIso () {
   echo "Burn"
 }
 
-main () {
+menuSelect () {
   TIME_NOW=$(date +%s)
   RUN_ID=${TIME_NOW}
+  CATALYST_ARGS=""
 
   (( ${#@} < 1 )) && usage && die "No arguments supplied" '1'
 
@@ -622,7 +639,7 @@ main () {
         REL_TYPE="${OPTARG}"
       ;;
       S)
-        BUILD_TARGET_STAGE="${OPTARG}"
+        [[ -z ${BUILD_TARGET_STAGE} ]] && BUILD_TARGET_STAGE="${OPTARG}"
       ;;
       T)
         case ${OPTARG} in
@@ -693,36 +710,57 @@ main () {
     esac
   done
 
+  main
+}
+
+main() {
   if [[ ${BUILD_TARGET} == "livecd" ]]
   then
+    if [[ ${BUILD_TARGET_STAGE} == "all" ]]
+    then
+      BUILD_TARGET_STAGE='1'
+      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
+      BUILD_TARGET_STAGE='2'
+      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
+    fi
     [[ ${BUILD_TARGET_STAGE} == [1-2] ]] || die "Need number of stage to build [1-2]" '1'
   else
+    if [[ ${BUILD_TARGET_STAGE} == "all" ]]
+    then
+      BUILD_TARGET_STAGE='1'
+      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
+      BUILD_TARGET_STAGE='2'
+      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
+      BUILD_TARGET_STAGE='3'
+      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
+      BUILD_TARGET_STAGE='4'
+      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
+    fi
     [[ ${BUILD_TARGET_STAGE} == [1-4] ]] || die "Need number of stage to build [1-4]" '1'
   fi 
 
-  START_TIME=$(date +%s)
-
-  (( VERBOSITY > 0 )) && debug
-
-  trap "echo && bundleLogs '2' && die 'SIGINT Caught' 2" SIGINT 
-  trap "echo && bundleLogs '2' && die 'SIGTERM Caught' 2" SIGTERM
-  trap "echo && bundleLogs '2' && die 'SIGHUP Caught' 2" SIGHUP
-  trap "cleanUp" EXIT
-  trap "(( ++VERBOSITY )) && debug" SIGUSR1
-  trap "DEBUG=1 && debug" SIGUSR2
-
   if [[ ${BUILD_TARGET} == "livecd" ]] || [[ ${BUILD_TARGET} == "stage" ]]
   then
-    prepCatalyst
+    prepCatalyst || return 1
   elif [[ ${BUILD_TARGET} == "ami" ]]
   then
-    burnAmi
+    burnAmi || return 1
   elif [[ ${BUILD_TARGET} == "iso" ]]
   then
-    burnIso
+    burnIso || return 1
   fi
 }
 
-main $@
+(( VERBOSITY > 0 )) && debug
+
+trap "echo && bundleLogs '2' && die 'SIGINT Caught' 2" SIGINT 
+trap "echo && bundleLogs '2' && die 'SIGTERM Caught' 2" SIGTERM
+trap "echo && bundleLogs '2' && die 'SIGHUP Caught' 2" SIGHUP
+trap "cleanUp" EXIT
+trap "(( ++VERBOSITY )) && debug" SIGUSR1
+trap "DEBUG=1 && debug" SIGUSR2
+RUN_ARGS=$@
+
+menuSelect ${RUN_ARGS}
 
 die "Fin." '0'
