@@ -77,6 +77,9 @@ log () {
   local prefix=$(printf "%${SCRIPT_SCOPE}s")
   local log_tag="[PID:$$]-[${0}]"
   case $1 in
+    0)
+      printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
+    ;;
     1)
       printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
       ${LOGGER} -p daemon.info -t "${log_tag}" "$2"
@@ -201,11 +204,11 @@ bundleLogs () {
 
   (( DEBUG == 1 )) && (( QUIET_OUTPUT == 1 )) && CATALYST_LOG_MASKS+=" *.dbg"
 
-  log 1 "Clearing empty logs"
+  log 0 "Clearing empty logs"
   find ${CATALYST_LOG_DIR} -type f -empty -exec rm {} \; &> /dev/null
   find ${CATALYST_LOG_DIR} -type d -empty -exec rm -rf {} \; &> /dev/null
 
-  log 1 "Collecting logs"
+  log 0 "Collecting logs"
   for mask in ${CATALYST_LOG_MASKS[@]}
   do
     CATALYST_LOGS+=" $(find ${CATALYST_LOG_DIR} -type f -not -path "*/archive/*" -not -path "*/failed/*" -name ${mask})"
@@ -216,12 +219,12 @@ bundleLogs () {
   case $1 in
     1)
       CATALYST_LOGS+=" ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
-      log 1 "Compressing logs"
+      log 0 "Compressing logs"
       tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}.tgz ${CATALYST_LOGS[@]} &> /dev/null
       (( $? == 0 )) && rm -rf ${CATALYST_LOGS[@]}
     ;;
     2)
-      log 1 "Moving logs to: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}"
+      log 0 "Moving logs to: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}"
       mkdir -p ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}
       for file in ${CATALYST_LOGS[@]}
       do
@@ -249,11 +252,11 @@ verifyTemplates () {
     ;;
   esac
 
-  log '1' "Checking for templates"
+  log '0' "Checking for templates"
   for template in ${TEMPLATES[@]}
   do 
     local SCRIPT_SCOPE='2'
-    (( VERBOSITY > 0 )) && log '1' "Checking: ${template}"
+    (( VERBOSITY > 0 )) && log '0' "Checking: ${template}"
     if [[ ! -f ${CATALYST_TEMPLATE_DIR}/${template} ]]
     then
         log '2' "Missing template: ${template}" 
@@ -268,7 +271,7 @@ mangleTemplate () {
   touch ${CATALYST_BUILD_DIR}/${SPEC_FILE} || return 1
 
   local SCRIPT_SCOPE='1'
-  log '1' "Mangling template: ${template}"
+  log '0' "Mangling template: ${template}"
   
   if [[ "$1" == "overwrite" ]] 
   then
@@ -284,7 +287,7 @@ mangleTemplate () {
   for var in ${var_names[@]}
   do
     local SCRIPT_SCOPE='2'
-    (( VERBOSITY > 0 )) && log '1' "Processing: $var"
+    (( VERBOSITY > 0 )) && log '0' "Processing: $var"
     var_name=${var}
     grep $var ${CATALYST_BUILD_DIR}/${SPEC_FILE} &> /dev/null || continue
     var_value=${!var}
@@ -335,13 +338,13 @@ sumCheck () {
   case ${method} in
     sha512)
       cd ${dir}
-      log '1' "Verifying ${method} hash for: ${file}"
+      log '0' "Verifying ${method} hash for: ${file}"
       ${SHA512SUM} -c ${digest} | egrep -e ": OK$" | grep "${file}" &>/dev/null
       retVal=$?
       (( retVal == 0 )) || return "${retVal}"
     ;;
     openssl)
-      log '1' "Verifying ${submethod} hash for: ${file} with: ${method}"
+      log '0' "Verifying ${submethod} hash for: ${file} with: ${method}"
       hash=$(${OPENSSL} dgst -r -${submethod} ${dir}/${file}|awk '{print $1}')
       grep ${hash} ${dir}/${digest} &> /dev/null
       retVal=$?
@@ -353,7 +356,7 @@ sumCheck () {
 
 sigCheck () {
   local SCRIPT_SCOPE='2'
-  log '1' "Verifying GPG Signature for: $1"
+  log '0' "Verifying GPG Signature for: $1"
   ${GPG} --verify ${1} 2>&1 | grep "$2" &> /dev/null
   retVal=$?
   (( retVal == 0 )) || return "${retVal}"
@@ -400,7 +403,7 @@ runCatalyst () {
   case ${method} in
     snapshot)
       local CATALYST_ARGS="${CATALYST_ARGS} -s"
-      log '1' "Taking portage snapshot with args: ${CATALYST_ARGS}"
+      log '0' "Taking portage snapshot with args: ${CATALYST_ARGS}"
       if (( QUIET_OUTPUT == 1 ))
       then
         local SCRIPT_SCOPE='2'
@@ -470,7 +473,7 @@ prepCatalystStage () {
 prepCatalystStage1 () {
   SEED_STAGE="${DIST_STAGE3_BZ2}"
   local SCRIPT_SCOPE='1'
-  log '1' "Checking for stage files"
+  log '0' "Checking for stage files"
   for file in "${DIST_STAGE3_DIGESTS}" "${DIST_STAGE3_CONTENTS}" "${DIST_STAGE3_ASC}" "${DIST_STAGE3_BZ2}"
   do
     if [[ ! -f ${CATALYST_BUILD_DIR}/${file} ]] 
@@ -480,7 +483,7 @@ prepCatalystStage1 () {
     fi
   done
 
-  log '1' "Verifying Stage Files"
+  log '0' "Verifying Stage Files"
   if [[ -f ${CATALYST_SNAPSHOT_DIR}/${DIST_STAGE3_BZ2} ]]
   then
     sigCheck "${CATALYST_SNAPSHOT_DIR}/${DIST_STAGE3_ASC}" 'Good signature from "Gentoo Linux Release Engineering (Automated Weekly Release Key) <releng@gentoo.org>"'
@@ -514,7 +517,7 @@ prepCatalyst () {
 
   if [[ -n ${STALE_LOGS} ]]
   then
-    log '1' "Cleaning up stale logs"
+    log '0' "Cleaning up stale logs"
     verifyObject 'dir' "${CATALYST_LOG_DIR}/failed/stale" || die "Could not create stale log dir: ${CATALYST_LOG_DIR}/failed/stale" '1'
     mv ${STALE_LOGS} ${CATALYST_LOG_DIR}/failed/stale/ || die "Could not move stale logs to: ${CATALYST_LOG_DIR}/failed/stale" '1'
   fi
@@ -647,7 +650,7 @@ prepCatalyst () {
   then
     local SCRIPT_SCOPE='1'
     CURRENT_STAGE=$( basename ${SEED_STAGE/stage[1-4]/stage${BUILD_TARGET_STAGE}} .tar.bz2)
-    log '1' "Clearing CCache: ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/${CURRENT_STAGE}/var/ccache/"
+    log '0' "Clearing CCache: ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/${CURRENT_STAGE}/var/ccache/"
     rm -rf ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/${CURRENT_STAGE}/var/ccache/* || die "Failed to clear CCache" '1'
     (( $? > 0 )) &&  log '2' "Failed to clear ccache"
   fi
@@ -675,6 +678,7 @@ menuSelect () {
   TIME_NOW=$(date +%s)
   RUN_ID=${TIME_NOW}
   CATALYST_ARGS=""
+  MAND_OPTS='6'
 
   (( ${#@} < 1 )) && usage && die "No arguments supplied" '1'
 
@@ -766,6 +770,16 @@ menuSelect () {
     esac
   done
 
+  [[ -n ${BUILD_TARGET} ]] || die "Target Unset" '1'
+  
+  if [[ ${BUILD_TARGET}='stage' || ${BUILD_TARGET}='livecd' ]]
+  then
+        [[ -n ${SUB_ARCH} ]] || die "ARCH Unset" '1'
+        [[ -n ${TARGET_KERNEL} ]] || die "Target kernel Unset" '1'
+        [[ -n ${BUILD_NAME} ]] || die "Build name unet" '1'
+        [[ -n ${REL_TYPE} ]] || die "Profile unset" '1'
+        [[ -n ${BUILD_TARGET_STAGE} ]] || die "Stage unset" '1'
+  fi
   main
 }
 
