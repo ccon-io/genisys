@@ -591,9 +591,8 @@ prepCatalyst () {
   if (( CLEAR_CCACHE == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    #/var/data/catalyst/tmp/deusOS/livecd/livecd-stage1-amd64-hardened+nomultilib-20160115/var/ccache/
-    log '1' "Clearing CCache: ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/$(basename ${SEED_STAGE} .tar.bz2)/var/ccache/"
     CURRENT_STAGE=$( basename ${SEED_STAGE/stage[1-4]/stage${BUILD_TARGET_STAGE}} .tar.bz2)
+    log '1' "Clearing CCache: ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/${CURRENT_STAGE}/var/ccache/"
     rm -rf ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/${CURRENT_STAGE}/var/ccache/* || die "Failed to clear CCache" '1'
     (( $? > 0 )) &&  log '2' "Failed to clear ccache"
   fi
