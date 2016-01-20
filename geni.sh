@@ -9,6 +9,7 @@ declare -r GPG='/usr/bin/gpg'
 declare -r SHA512SUM='/usr/bin/sha512sum'
 declare -r OPENSSL='/usr/bin/openssl'
 declare -r CATALYST='/usr/bin/catalyst'
+declare -r LOGGER='/usr/bin/logger'
 declare -r EC2_BUNDLE_IMAGE='/usr/bin/ec2-bundle-image'
 
 
@@ -73,18 +74,61 @@ usage () {
 }
 
 log () {
-  prefix=$(printf "%${SCRIPT_SCOPE}s")
+  local prefix=$(printf "%${SCRIPT_SCOPE}s")
+  local log_tag="[PID:$$]-[${0}]"
   case $1 in
     1)
       printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
+      ${LOGGER} -p daemon.info -t "${log_tag}" "$2"
     ;;
     2)
       >&2  printf "${COLOUR_RED}***${COLOUR_RST} $2 ${COLOUR_RED}***${COLOUR_RST}\n"
+      ${LOGGER} -p daemon.err -t "${log_tag}" "$2"
     ;;
     3)
       printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2"
     ;;
   esac
+
+}
+
+debug () {
+  if (( VERBOSITY == 2 )) || (( VERBOSITY >= 4 ))
+  then
+    set -v 
+  elif (( VERBOSITY >= 3 )) || (( DEBUG == 1 ))
+  then
+    ( (( QUIET_OUTPUT == 1 )) || (( DEBUG == 1 )) ) && exec 3>| ${CATALYST_LOG_DIR}/catalyst-${RUN_ID}.dbg
+    ( (( QUIET_OUTPUT == 1 )) || (( DEBUG == 1 )) ) && BASH_XTRACEFD=3
+    exec 3>| ${CATALYST_LOG_DIR}/catalyst-${RUN_ID}.dbg
+    set -x
+    export PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+    DEBUG='1'
+  fi
+}
+
+checkPid () {
+  PID_ALIVE=0
+  kill -0 $1 &> /dev/null
+  (( $? == 0 )) && PID_ALIVE=1
+  return 0
+}
+
+cleanUp () {
+  for pid in $(pgrep -P $$)
+  do  
+    checkPid $pid 
+    (( PID_ALIVE == 0 )) && continue
+    kill $pid &> /dev/null
+    checkPid $pid
+    (( PID_ALIVE == 0 )) && continue
+    kill -9 $pid &> /dev/null
+    checkPid $pid 
+    (( PID_ALIVE == 0 )) && continue
+    log 2 "Zombie Process Identified: $pid (take its head off)"
+  done
+
+  [[ -f ${PID_FILE} ]] && rm ${PID_FILE}
 }
 
 debug () {
@@ -161,7 +205,7 @@ bundleLogs () {
   find ${CATALYST_LOG_DIR} -type f -empty -exec rm {} \; &> /dev/null
   find ${CATALYST_LOG_DIR} -type d -empty -exec rm -rf {} \; &> /dev/null
 
-  log 1 "Collecting relevant logs"
+  log 1 "Collecting logs"
   for mask in ${CATALYST_LOG_MASKS[@]}
   do
     CATALYST_LOGS+=" $(find ${CATALYST_LOG_DIR} -type f -not -path "*/archive/*" -not -path "*/failed/*" -name ${mask})"
@@ -251,6 +295,7 @@ mangleTemplate () {
 }
 
 fetchRemote () {
+  local SCRIPT_SCOPE='2'
   local method="$1"
   local url="$2"
   (( ${#@} == 3 )) && local dir="$3"
@@ -424,12 +469,13 @@ prepCatalystStage () {
 
 prepCatalystStage1 () {
   SEED_STAGE="${DIST_STAGE3_BZ2}"
+  local SCRIPT_SCOPE='1'
   log '1' "Checking for stage files"
   for file in "${DIST_STAGE3_DIGESTS}" "${DIST_STAGE3_CONTENTS}" "${DIST_STAGE3_ASC}" "${DIST_STAGE3_BZ2}"
   do
-    if [[ ! -f ${CATALYST_SNAPSHOT_DIR}/${file} ]] 
+    if [[ ! -f ${CATALYST_BUILD_DIR}/${file} ]] 
     then
-      fetchRemote 'parallel' "${DIST_BASE_URL}/${DIST_STAGE3_PATH_BASE}/${file}" "${CATALYST_SNAPSHOT_DIR}"
+      fetchRemote 'parallel' "${DIST_BASE_URL}/${DIST_STAGE3_PATH_BASE}/${file}" "${CATALYST_BUILD_DIR}"
       (( $? == 0 )) || die "Failed to fetch: ${file}" "$?"
     fi
   done
@@ -460,15 +506,24 @@ prepCatalystStage1 () {
 }
 
 prepCatalyst () {
-  START_TIME=$(date +%s)
   (( $UID > 0 )) && die "Must run with root" '2'
+  START_TIME=$(date +%s)
+  echo $$ > ${PID_FILE}
+
+  STALE_LOGS=$(find ${CATALYST_LOG_DIR} -type f -mindepth 1 -maxdepth 1 2> /dev/null)
+
+  if [[ -n ${STALE_LOGS} ]]
+  then
+    log '1' "Cleaning up stale logs"
+    verifyObject 'dir' "${CATALYST_LOG_DIR}/failed/stale" || die "Could not create stale log dir: ${CATALYST_LOG_DIR}/failed/stale" '1'
+    mv ${STALE_LOGS} ${CATALYST_LOG_DIR}/failed/stale/ || die "Could not move stale logs to: ${CATALYST_LOG_DIR}/failed/stale" '1'
+  fi
 
   verifyObject 'dir' "${CATALYST_TMP_DIR}/${BUILD_NAME}" || die "Could not create build dir: ${CATALYST_TMP_DIR}/${BUILD_NAME}" '1'
 
   mount|grep "${CATALYST_TMP_DIR}" &> /dev/null
   (( $? == 0 )) && die "Looks like stuff is still mounted in the chroot. This makes pain. Check: mount | grep ${CATALYST_TMP_DIR}" '1'
 
-  echo $$ > ${PID_FILE}
 
   CATALYST_BUILD_DIR="${CATALYST_BUILD_DIR_BASE}/${BUILD_NAME}/${BUILD_TARGET}"
 
@@ -687,6 +742,7 @@ menuSelect () {
       ;;
       p)
         [[ ! ${CATALYST_ARGS} =~ "-p -a" ]] && CATALYST_ARGS="${CATALYST_ARGS} -p -a"
+        CLEAR_CCACHE='1'
       ;;
       q)
         QUIET_OUTPUT='1'
