@@ -75,7 +75,7 @@ usage () {
 
 log () {
   local prefix=$(printf "%${SCRIPT_SCOPE}s")
-  local log_tag="[PID:$$]-[${0}]"
+  local log_tag="[PID:$$]-[$(basename ${0})]"
   case $1 in
     0)
       printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
@@ -792,6 +792,8 @@ main() {
       main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
       BUILD_TARGET_STAGE='2'
       main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
+      die "ISO Built" '0'
+      
     fi
     [[ ${BUILD_TARGET_STAGE} == [1-2] ]] || die "Need number of stage to build [1-2]" '1'
   else
@@ -805,6 +807,7 @@ main() {
       main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
       BUILD_TARGET_STAGE='4'
       main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
+      die "Stage Built" '0'
     fi
     [[ ${BUILD_TARGET_STAGE} == [1-4] ]] || die "Need number of stage to build [1-4]" '1'
   fi 
