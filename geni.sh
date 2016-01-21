@@ -30,6 +30,11 @@ declare -r COLOUR_RST='\033[0m'
 declare BUILD_TARGET_STAGE=""
 declare BUILD_TARGET=""
 declare BUILD_VERSION=""
+declare SUB_ARCH=""
+declare TARGET_KERNEL=""
+declare BUILD_NAME=""
+declare REL_TYPE=""
+declare BUILD_TARGET_STAGE=""
 
 CATALYST_USERS=""
 
@@ -47,21 +52,12 @@ CATALYST_LOG_DIR="$(grep ^port_logdir ${CATALYST_CONFIG}|cut -d\" -f2)"
 CATALYST_SNAPSHOT_DIR="$(grep ^snapshot_cache ${CATALYST_CONFIG}|cut -d\" -f2)"
 
 die () {
-  (( $2 > 0 )) && log '2' "$1"
+  (( $2 == 1 )) && log '2' "$1"
+  (( $2 == 3 )) && log '4' "$1" && usage
   if (( $2 == 0 ))
   then
-    END_TIME=$(date +%s)
-    BUILD_TIME=$(( END_TIME - START_TIME ))
-
-    seconds=${BUILD_TIME}
-    hours=$((seconds / 3600))
-    seconds=$((seconds % 3600))
-    minutes=$((seconds / 60))
-    seconds=$((seconds % 60))
-
-    BUILD_TIME="${hours}h:${minutes}m:${seconds}s"
-    log '1' "$1"
-    log '1' "Completed in: ${BUILD_TIME}"
+    timeElapsed "START_TIME"
+    log '1' "${1}: Completed in: ${BUILD_TIME}"
   fi
   exit $2
 }
@@ -75,7 +71,7 @@ usage () {
 
 log () {
   local prefix=$(printf "%${SCRIPT_SCOPE}s")
-  local log_tag="$(basename ${0})[PID:$$]"
+  local log_tag="$(basename ${0})[$$]"
   case $1 in
     0)
       printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
@@ -90,6 +86,9 @@ log () {
     ;;
     3)
       printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2"
+    ;;
+    4)
+      >&2  printf "${COLOUR_RED}***${COLOUR_RST} $2 ${COLOUR_RED}***${COLOUR_RST}\n"
     ;;
   esac
 
@@ -108,6 +107,17 @@ debug () {
     export PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
     DEBUG='1'
   fi
+}
+
+timeElapsed () {
+    END_TIME=$(date +%s)
+    BUILD_TIME=$(( END_TIME - ${1} ))
+    seconds=${BUILD_TIME}
+    hours=$((seconds / 3600))
+    seconds=$((seconds % 3600))
+    minutes=$((seconds / 60))
+    seconds=$((seconds % 60))
+    BUILD_TIME="${hours}h:${minutes}m:${seconds}s"
 }
 
 checkPid () {
@@ -195,6 +205,19 @@ verifyObject () {
   esac
 
   return ${retVal}
+}
+
+runWrapper () {
+  for i in ${1}
+  do
+    BUILD_TARGET_STAGE="$i"
+    BUILD_START_TIME=$(date +%s)
+    main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
+    timeElapsed BUILD_START_TIME
+    log '1' "Stage ${BUILD_TARGET_STAGE}: Completed in: ${BUILD_TIME}"
+  done
+
+  die "${BUILD_TARGET} Built" '0'
 }
 
 bundleLogs () {
@@ -333,7 +356,7 @@ sumCheck () {
   local digest="$4"
   local submethod="$5"
 
-  local SCRIPT_SCOPE='2'
+  local SCRIPT_SCOPE='3'
 
   case ${method} in
     sha512)
@@ -355,7 +378,7 @@ sumCheck () {
 }
 
 sigCheck () {
-  local SCRIPT_SCOPE='2'
+  local SCRIPT_SCOPE='3'
   log '0' "Verifying GPG Signature for: $1"
   ${GPG} --verify ${1} 2>&1 | grep "$2" &> /dev/null
   retVal=$?
@@ -483,22 +506,25 @@ prepCatalystStage1 () {
     fi
   done
 
+  local SCRIPT_SCOPE='2'
   log '0' "Verifying Stage Files"
-  if [[ -f ${CATALYST_SNAPSHOT_DIR}/${DIST_STAGE3_BZ2} ]]
+  if [[ -f ${CATALYST_BUILD_DIR}/${DIST_STAGE3_BZ2} ]]
   then
-    sigCheck "${CATALYST_SNAPSHOT_DIR}/${DIST_STAGE3_ASC}" 'Good signature from "Gentoo Linux Release Engineering (Automated Weekly Release Key) <releng@gentoo.org>"'
+    sigCheck "${CATALYST_BUILD_DIR}/${DIST_STAGE3_ASC}" 'Good signature from "Gentoo Linux Release Engineering (Automated Weekly Release Key) <releng@gentoo.org>"'
     (( $? == 0 )) || die "Failed to verify signature" "$?"
 
     for file in "${DIST_STAGE3_BZ2}" "${DIST_STAGE3_CONTENTS}"
     do
-      sumCheck 'openssl' "${CATALYST_SNAPSHOT_DIR}" "${file}" "${DIST_STAGE3_DIGESTS}" sha512
+      sumCheck 'openssl' "${CATALYST_BUILD_DIR}" "${file}" "${DIST_STAGE3_DIGESTS}" sha512
       (( $? == 0 )) || die "SHA512 checksum failed for: ${file}" "$?"
-      sumCheck 'openssl' "${CATALYST_SNAPSHOT_DIR}" "${file}" "${DIST_STAGE3_DIGESTS}" whirlpool
+      sumCheck 'openssl' "${CATALYST_BUILD_DIR}" "${file}" "${DIST_STAGE3_DIGESTS}" whirlpool
       (( $? == 0 )) || die "Whirlpool checksum failed for: ${file}" "$?"
     done
+  else
+    die "Can't find: ${CATALYST_BUILD_DIR}/${DIST_STAGE3_BZ2}" '1'
   fi
 
-  log '1' "Starting Catalyst run..."
+  log '0' "Starting Catalyst run..."
   if (( BUILD_TARGET_STAGE == 1 ))
   then
     if (( PORTAGE_SNAPSHOT_AGE > PORTAGE_SNAPSHOT_AGE_MAX ))
@@ -510,7 +536,6 @@ prepCatalystStage1 () {
 
 prepCatalyst () {
   (( $UID > 0 )) && die "Must run with root" '2'
-  START_TIME=$(date +%s)
   echo $$ > ${PID_FILE}
 
   STALE_LOGS=$(find ${CATALYST_LOG_DIR} -type f -mindepth 1 -maxdepth 1 2> /dev/null)
@@ -605,13 +630,13 @@ prepCatalyst () {
   if (( SELINUX == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    log '1' "SELinux Enabled"
+    log '0' "SELinux Enabled"
   fi
 
   if (( NO_MULTILIB == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    log '1' "Multilib Disabled"
+    log '0' "Multilib Disabled"
   fi
 
   verifyObject 'dir' "${CATALYST_BUILD_DIR}" || die "Could not create build dir: ${CATALYST_BUILD_DIR}" '1'
@@ -676,9 +701,9 @@ burnIso () {
 
 menuSelect () {
   TIME_NOW=$(date +%s)
+  START_TIME=${TIME_NOW}
   RUN_ID=${TIME_NOW}
   CATALYST_ARGS=""
-  MAND_OPTS='6'
 
   (( ${#@} < 1 )) && usage && die "No arguments supplied" '1'
 
@@ -774,40 +799,29 @@ menuSelect () {
   
   if [[ ${BUILD_TARGET}='stage' || ${BUILD_TARGET}='livecd' ]]
   then
-        [[ -n ${SUB_ARCH} ]] || die "ARCH Unset" '1'
-        [[ -n ${TARGET_KERNEL} ]] || die "Target kernel Unset" '1'
-        [[ -n ${BUILD_NAME} ]] || die "Build name unet" '1'
-        [[ -n ${REL_TYPE} ]] || die "Profile unset" '1'
-        [[ -n ${BUILD_TARGET_STAGE} ]] || die "Stage unset" '1'
+        [[ -n ${BUILD_TARGET_STAGE} ]] || die "Stage (-S) unset" '3'
+        [[ -n ${SUB_ARCH} ]] || die "ARCH (-A) unset" '3'
+        [[ -n ${TARGET_KERNEL} ]] || die "Target kernel (-K) Unset" '3'
+        [[ -n ${BUILD_NAME} ]] || die "Build name (-N) unset" '3'
+        [[ -n ${REL_TYPE} ]] || die "Profile (-P) unset" '3'
   fi
   main
 }
 
 main() {
+  TIME_NOW=$(date +%s)
+  RUN_ID=${TIME_NOW}
   if [[ ${BUILD_TARGET} == "livecd" ]]
   then
     if [[ ${BUILD_TARGET_STAGE} == "all" ]]
     then
-      BUILD_TARGET_STAGE='1'
-      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
-      BUILD_TARGET_STAGE='2'
-      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
-      die "ISO Built" '0'
-      
+      runWrapper "1 2"
     fi
     [[ ${BUILD_TARGET_STAGE} == [1-2] ]] || die "Need number of stage to build [1-2]" '1'
   else
     if [[ ${BUILD_TARGET_STAGE} == "all" ]]
     then
-      BUILD_TARGET_STAGE='1'
-      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
-      BUILD_TARGET_STAGE='2'
-      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
-      BUILD_TARGET_STAGE='3'
-      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
-      BUILD_TARGET_STAGE='4'
-      main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
-      die "Stage Built" '0'
+      runWrapper "1 2 3 4"
     fi
     [[ ${BUILD_TARGET_STAGE} == [1-4] ]] || die "Need number of stage to build [1-4]" '1'
   fi 
