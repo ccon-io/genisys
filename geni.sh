@@ -75,7 +75,7 @@ usage () {
 
 log () {
   local prefix=$(printf "%${SCRIPT_SCOPE}s")
-  local log_tag="[PID:$$]-[$(basename ${0})]"
+  local log_tag="$(basename ${0})[PID:$$]"
   case $1 in
     0)
       printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
@@ -600,7 +600,7 @@ prepCatalyst () {
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
   [[ ${BUILD_TARGET} == stage ]] && prepCatalystStage
   
-  log '1' "Starting run for: ${BUILD_NAME} with a ${REL_TYPE} stack on ${SUB_ARCH} for Stage: ${BUILD_TARGET_STAGE} for delivery by: ${BUILD_TARGET}"
+  log '1' "Starting run ID: ${RUN_ID} for: ${BUILD_NAME} with a ${REL_TYPE} stack on ${SUB_ARCH} for Stage: ${BUILD_TARGET_STAGE} for delivery by: ${BUILD_TARGET}"
 
   if (( SELINUX == 1 ))
   then
