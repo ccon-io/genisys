@@ -22,6 +22,8 @@ declare -i CLEAR_CCACHE='0'
 declare -i QUIET_OUTPUT='0'
 declare -i NO_MULTILIB='0'
 declare -i SELINUX='0'
+declare -i AWS_SUPPORT='0'
+declare -i OPENSTACK_SUPPORT='0'
 
 declare -r COLOUR_RED='\033[0;31m'
 declare -r COLOUR_GREEN='\033[0;32m'
@@ -53,7 +55,7 @@ CATALYST_SNAPSHOT_DIR="$(grep ^snapshot_cache ${CATALYST_CONFIG}|cut -d\" -f2)"
 
 die () {
   (( $2 == 1 )) && log '2' "$1"
-  (( $2 == 3 )) && log '4' "$1" && usage
+  (( $2 == 2 )) && log '4' "$1" && usage
   if (( $2 == 0 ))
   then
     timeElapsed "START_TIME"
@@ -604,8 +606,10 @@ prepCatalyst () {
   DIST_STAGE1_BZ2="${DIST_STAGE3_BZ2/stage3/stage1}"
   SEED_STAGE="${DIST_STAGE1_BZ2}"
 
-  VERSION_STAMP="${REL_TYPE}-${DIST_STAGE3_LATEST}"
-  (( NO_MULTILIB == 1 )) && VERSION_STAMP="${REL_TYPE}+nomultilib-${DIST_STAGE3_LATEST}"
+  VERSION_STAMP_PREFIX="${REL_TYPE}"
+  (( SELINUX == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}-selinux"
+  (( NO_MULTILIB == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}+nomultilib"
+  VERSION_STAMP="${VERSION_STAMP_PREFIX}-${DIST_STAGE3_LATEST}"
 
   SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec"
 
@@ -640,13 +644,25 @@ prepCatalyst () {
     log '0' "Multilib Disabled"
   fi
 
-  verifyObject 'dir' "${CATALYST_BUILD_DIR}" || die "Could not create build dir: ${CATALYST_BUILD_DIR}" '1'
+  if (( AWS_SUPPORT == 1 ))
+  then
+    local SCRIPT_SCOPE='1'
+    log '0' "Building Stage 4 for aws"
+  fi
 
+  if (( CLOUD_SUPPORT == 1 ))
+  then
+    local SCRIPT_SCOPE='1'
+    log '0' "Building Stage 4 for openstack"
+  fi
+
+  verifyObject 'dir' "${CATALYST_BUILD_DIR}" || die "Could not create build dir: ${CATALYST_BUILD_DIR}" '1'
 
   if [[ ${REL_TYPE} == 'hardened' ]]
   then
     SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-${REL_TYPE}"
     (( NO_MULTILIB == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}+nomultilib"
+    (( SELINUX == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-selinux"
   else
     (( NO_MULTILIB == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-nomultilib"
   fi
@@ -706,7 +722,7 @@ menuSelect () {
   RUN_ID=${TIME_NOW}
   CATALYST_ARGS=""
 
-  (( ${#@} < 1 )) && usage && die "No arguments supplied" '1'
+  (( ${#@} < 1 )) && die "No arguments supplied" '2'
 
   while getopts ":A:K:N:P:S:T:V:acdknopqrsv" opt
   do
@@ -741,13 +757,13 @@ menuSelect () {
             BUILD_TARGET='stage'
           ;;
           \?)
-            die "Unknown flag: -$OPTARG"
+            die "Unknown flag: -$OPTARG" '2'
           ;;
           :)
-            die "Missing parameter for flag: -$OPTARG"
+            die "Missing parameter for flag: -$OPTARG" '2'
           ;;
           *)
-            die "Invalid Target specified: $OPTARG, should be one of [ iso, ami, stage ]" '1'
+            die "Invalid Target specified: $OPTARG, should be one of [ iso, ami, stage ]" '2'
           ;;
         esac
       ;;
@@ -807,11 +823,11 @@ menuSelect () {
   
   if [[ ${BUILD_TARGET}='stage' || ${BUILD_TARGET}='livecd' ]]
   then
-        [[ -n ${BUILD_TARGET_STAGE} ]] || die "Stage (-S) unset" '3'
-        [[ -n ${SUB_ARCH} ]] || die "ARCH (-A) unset" '3'
-        [[ -n ${TARGET_KERNEL} ]] || die "Target kernel (-K) Unset" '3'
-        [[ -n ${BUILD_NAME} ]] || die "Build name (-N) unset" '3'
-        [[ -n ${REL_TYPE} ]] || die "Profile (-P) unset" '3'
+        [[ -n ${BUILD_TARGET_STAGE} ]] || die "Stage (-S) unset" '2'
+        [[ -n ${SUB_ARCH} ]] || die "ARCH (-A) unset" '2'
+        [[ -n ${TARGET_KERNEL} ]] || die "Target kernel (-K) Unset" '2'
+        [[ -n ${BUILD_NAME} ]] || die "Build name (-N) unset" '2'
+        [[ -n ${REL_TYPE} ]] || die "Profile (-P) unset" '2'
   fi
   main
 }
@@ -852,9 +868,9 @@ main() {
 
 (( VERBOSITY > 0 )) && debug
 
-trap "echo && bundleLogs '2' && die 'SIGINT Caught' 2" SIGINT 
-trap "echo && bundleLogs '2' && die 'SIGTERM Caught' 2" SIGTERM
-trap "echo && bundleLogs '2' && die 'SIGHUP Caught' 2" SIGHUP
+trap "echo && bundleLogs '2' && die 'SIGINT Caught' 1" SIGINT 
+trap "echo && bundleLogs '2' && die 'SIGTERM Caught' 1" SIGTERM
+trap "echo && bundleLogs '2' && die 'SIGHUP Caught' 1" SIGHUP
 trap "cleanUp" EXIT
 trap "(( ++VERBOSITY )) && debug" SIGUSR1
 trap "DEBUG=1 && debug" SIGUSR2
