@@ -65,7 +65,8 @@ die () {
 usage () {
   log 1 "Usage:"
   echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage)\n\t\t-A { amd64 | x32 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | gentoo } \t\t-- Base profile for this build\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch"
-  echo -e "\n\tOptional args:\t-a [clear autoresume] -c [clear ccache] -d [debug] -k [enable kerncache] -n [no-multilib] -p [purge] -q [quiet] -s [enable selinux] -v [increment verbosity]"
+  echo -e "\n\tOptional args:\t-a [aws support] -k [enable kerncache] -n [no-multilib] -o [openstack support] -s [selinux support]"
+  echo -e "\t\t\t-c [clear ccache] -d [debug] -p [purge] -q [quiet] -r [clear autoresume] -v [increment verbosity]"
   echo
 }
 
@@ -217,7 +218,7 @@ runWrapper () {
     log '1' "Stage ${BUILD_TARGET_STAGE}: Completed in: ${BUILD_TIME}"
   done
 
-  die "${BUILD_TARGET} Built" '0'
+  die "${BUILD_TARGET} built" '0'
 }
 
 bundleLogs () {
@@ -707,7 +708,7 @@ menuSelect () {
 
   (( ${#@} < 1 )) && usage && die "No arguments supplied" '1'
 
-  while getopts ":A:K:N:P:S:T:V:acdknpqsv" opt
+  while getopts ":A:K:N:P:S:T:V:acdknopqrsv" opt
   do
     case ${opt} in
       A)
@@ -754,17 +755,21 @@ menuSelect () {
         BUILD_VERSION="${OPTARG}"
       ;;
       a)
-        [[ ! ${CATALYST_ARGS} =~ "-a" ]] && CATALYST_ARGS="${CATALYST_ARGS} -a"
+        AWS_SUPPORT='1'
       ;;
       c)
         CLEAR_CCACHE='1'
       ;;
       d)
+        DEBUG='1'
         [[ ! ${CATALYST_ARGS} =~ "-d" ]] && CATALYST_ARGS="${CATALYST_ARGS} -d"
       ;;
       k)
         CATALYST_CONFIG="${CATALYST_CONFIG_KERNCACHE}"
         [[ ! ${CATALYST_ARGS} =~ "-c" ]] && CATALYST_ARGS="${CATALYST_ARGS} -c ${CATALYST_CONFIG}"
+      ;;
+      o)
+        OPENSTACK_SUPPORT='1'
       ;;
       n)
         NO_MULTILIB='1'
@@ -775,6 +780,9 @@ menuSelect () {
       ;;
       q)
         QUIET_OUTPUT='1'
+      ;;
+      r)
+        [[ ! ${CATALYST_ARGS} =~ "-a" ]] && CATALYST_ARGS="${CATALYST_ARGS} -a"
       ;;
       s)
         SELINUX='1'
@@ -819,9 +827,13 @@ main() {
     fi
     [[ ${BUILD_TARGET_STAGE} == [1-2] ]] || die "Need number of stage to build [1-2]" '1'
   else
-    if [[ ${BUILD_TARGET_STAGE} == "all" ]]
+    if [[ ${BUILD_TARGET_STAGE} == "all" ]] 
     then
-      runWrapper "1 2 3 4"
+      if (( AWS_SUPPORT > 0 || OPENSTACK_SUPPORT > 0 ))
+      then
+        runWrapper "1 2 3 4"
+      fi
+      runWrapper "1 2 3"
     fi
     [[ ${BUILD_TARGET_STAGE} == [1-4] ]] || die "Need number of stage to build [1-4]" '1'
   fi 
