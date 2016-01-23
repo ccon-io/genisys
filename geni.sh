@@ -359,7 +359,7 @@ sumCheck () {
   local digest="$4"
   local submethod="$5"
 
-  local SCRIPT_SCOPE='3'
+  local SCRIPT_SCOPE='2'
 
   case ${method} in
     sha512)
@@ -381,7 +381,7 @@ sumCheck () {
 }
 
 sigCheck () {
-  local SCRIPT_SCOPE='3'
+  local SCRIPT_SCOPE='2'
   log '0' "Verifying GPG Signature for: $1"
   ${GPG} --verify ${1} 2>&1 | grep "$2" &> /dev/null
   retVal=$?
@@ -421,7 +421,7 @@ awsBundleImage () {
 
 runCatalyst () {
   local method="$1"
-  local SCRIPT_SCOPE='1'
+  local SCRIPT_SCOPE='2'
   local SCRIPT_OUT="${CATALYST_LOG_DIR}/catalyst-${BUILD_TARGET}-${method}-${RUN_ID}.info"
   local SCRIPT_ERR="${CATALYST_LOG_DIR}/catalyst-${BUILD_TARGET}-${method}-${RUN_ID}.err"
   local SCRIPT_FLAGS="-f -e -q -c"
@@ -449,7 +449,7 @@ runCatalyst () {
       log '1' "Building with args: ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       if (( QUIET_OUTPUT == 1 ))
       then
-        local SCRIPT_SCOPE='2'
+        local SCRIPT_SCOPE='3'
         log '3' "Running silently..."
         ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}" ${SCRIPT_OUT} 2> ${SCRIPT_ERR} &> /dev/null ) &
         jobWait $!
@@ -509,7 +509,7 @@ prepCatalystStage1 () {
     fi
   done
 
-  local SCRIPT_SCOPE='2'
+  local SCRIPT_SCOPE='1'
   log '0' "Verifying Stage Files"
   if [[ -f ${CATALYST_BUILD_DIR}/${DIST_STAGE3_BZ2} ]]
   then
@@ -527,6 +527,7 @@ prepCatalystStage1 () {
     die "Can't find: ${CATALYST_BUILD_DIR}/${DIST_STAGE3_BZ2}" '1'
   fi
 
+  local SCRIPT_SCOPE='1'
   log '0' "Starting Catalyst run..."
   if (( BUILD_TARGET_STAGE == 1 ))
   then
@@ -650,7 +651,7 @@ prepCatalyst () {
     log '0' "Building Stage 4 for aws"
   fi
 
-  if (( CLOUD_SUPPORT == 1 ))
+  if (( OPENSTACK_SUPPORT == 1 ))
   then
     local SCRIPT_SCOPE='1'
     log '0' "Building Stage 4 for openstack"
@@ -661,8 +662,8 @@ prepCatalyst () {
   if [[ ${REL_TYPE} == 'hardened' ]]
   then
     SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-${REL_TYPE}"
-    (( NO_MULTILIB == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}+nomultilib"
     (( SELINUX == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-selinux"
+    (( NO_MULTILIB == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}+nomultilib"
   else
     (( NO_MULTILIB == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-nomultilib"
   fi
@@ -690,7 +691,7 @@ prepCatalyst () {
 
   if (( CLEAR_CCACHE == 1 ))
   then
-    local SCRIPT_SCOPE='1'
+    local SCRIPT_SCOPE='3'
     CURRENT_STAGE=$( basename ${SEED_STAGE/stage[1-4]/stage${BUILD_TARGET_STAGE}} .tar.bz2)
     log '0' "Clearing CCache: ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/${CURRENT_STAGE}/var/ccache/"
     rm -rf ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/${CURRENT_STAGE}/var/ccache/* || die "Failed to clear CCache" '1'
