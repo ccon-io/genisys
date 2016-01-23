@@ -781,6 +781,8 @@ menuSelect () {
     esac
   done
 
+  (( VERBOSITY > 0 || DEBUG == 1 )) && debug
+
   [[ -n ${BUILD_TARGET} ]] || die "Target Unset" '1'
   
   if [[ ${BUILD_TARGET}='stage' || ${BUILD_TARGET}='livecd' ]]
@@ -828,7 +830,6 @@ main() {
   fi
 }
 
-(( VERBOSITY > 0 )) && debug
 
 trap "echo && bundleLogs '2' && die 'SIGINT Caught' 1" SIGINT 
 trap "echo && bundleLogs '2' && die 'SIGTERM Caught' 1" SIGTERM
