@@ -147,45 +147,6 @@ cleanUp () {
   [[ -f ${PID_FILE} ]] && rm ${PID_FILE}
 }
 
-debug () {
-  if (( VERBOSITY == 2 )) || (( VERBOSITY >= 4 ))
-  then
-    set -v 
-  elif (( VERBOSITY >= 3 )) || (( DEBUG == 1 ))
-  then
-    ( (( QUIET_OUTPUT == 1 )) || (( DEBUG == 1 )) ) && exec 3>| ${CATALYST_LOG_DIR}/catalyst-${RUN_ID}.dbg
-    ( (( QUIET_OUTPUT == 1 )) || (( DEBUG == 1 )) ) && BASH_XTRACEFD=3
-    exec 3>| ${CATALYST_LOG_DIR}/catalyst-${RUN_ID}.dbg
-    set -x
-    export PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
-    DEBUG='1'
-  fi
-}
-
-checkPid () {
-  PID_ALIVE=0
-  kill -0 $1 &> /dev/null
-  (( $? == 0 )) && PID_ALIVE=1
-  return 0
-}
-
-cleanUp () {
-  for pid in $(pgrep -P $$)
-  do  
-    checkPid $pid 
-    (( PID_ALIVE == 0 )) && continue
-    kill $pid &> /dev/null
-    checkPid $pid
-    (( PID_ALIVE == 0 )) && continue
-    kill -9 $pid &> /dev/null
-    checkPid $pid 
-    (( PID_ALIVE == 0 )) && continue
-    log 2 "Zombie Process Identified: $pid (take its head off)"
-  done
-
-  [[ -f ${PID_FILE} ]] && rm ${PID_FILE}
-}
-
 verifyObject () {
   local retVal=0
   case $1 in
