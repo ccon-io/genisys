@@ -466,7 +466,7 @@ prepCatalystStage1 () {
     if [[ ! -f ${CATALYST_BUILD_DIR}/${file} ]] 
     then
       fetchRemote 'parallel' "${DIST_BASE_URL}/${DIST_STAGE3_PATH_BASE}/${file}" "${CATALYST_BUILD_DIR}"
-      (( $? == 0 )) || die "Failed to fetch: ${file}" "$?"
+      (( $? == 0 )) || die "Failed to fetch: ${file}" "1"
     fi
   done
 
@@ -475,14 +475,14 @@ prepCatalystStage1 () {
   if [[ -f ${CATALYST_BUILD_DIR}/${DIST_STAGE3_BZ2} ]]
   then
     sigCheck "${CATALYST_BUILD_DIR}/${DIST_STAGE3_ASC}" 'Good signature from "Gentoo Linux Release Engineering (Automated Weekly Release Key) <releng@gentoo.org>"'
-    (( $? == 0 )) || die "Failed to verify signature" "$?"
+    (( $? == 0 )) || die "Failed to verify signature" "1"
 
     for file in "${DIST_STAGE3_BZ2}" "${DIST_STAGE3_CONTENTS}"
     do
       sumCheck 'openssl' "${CATALYST_BUILD_DIR}" "${file}" "${DIST_STAGE3_DIGESTS}" sha512
-      (( $? == 0 )) || die "SHA512 checksum failed for: ${file}" "$?"
+      (( $? == 0 )) || die "SHA512 checksum failed for: ${file}" "1"
       sumCheck 'openssl' "${CATALYST_BUILD_DIR}" "${file}" "${DIST_STAGE3_DIGESTS}" whirlpool
-      (( $? == 0 )) || die "Whirlpool checksum failed for: ${file}" "$?"
+      (( $? == 0 )) || die "Whirlpool checksum failed for: ${file}" "1"
     done
   else
     die "Can't find: ${CATALYST_BUILD_DIR}/${DIST_STAGE3_BZ2}" '1'
@@ -494,7 +494,7 @@ prepCatalystStage1 () {
   then
     if (( PORTAGE_SNAPSHOT_AGE > PORTAGE_SNAPSHOT_AGE_MAX ))
     then 
-      runCatalyst 'snapshot' || die "Catalyst failed to make a snapshot of portage" "$?"
+      runCatalyst 'snapshot' || die "Catalyst failed to make a snapshot of portage" "1"
     fi
   fi
 }
@@ -659,7 +659,7 @@ prepCatalyst () {
     (( $? > 0 )) &&  log '2' "Failed to clear ccache"
   fi
 
-  runCatalyst 'build' || die "Catalyst failed to build" "$?"
+  runCatalyst 'build' || die "Catalyst failed to build" "1"
 }
 
 burnAmi () {
