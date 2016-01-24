@@ -43,17 +43,16 @@ CATALYST_USERS=""
 CATALYST_CONFIG_DIR='/etc/catalyst'
 CATALYST_CONFIG="${CATALYST_CONFIG_DIR}/catalyst.conf"
 CATALYST_CONFIG_KERNCACHE="${CATALYST_CONFIG_DIR}/catalyst-kerncache.conf"
+
 CATALYST_BASE_DIR="$(grep ^storedir ${CATALYST_CONFIG}|cut -d\" -f2)"
 CATALYST_BUILD_DIR_BASE="${CATALYST_BASE_DIR}/builds"
 CATALYST_TEMPLATE_DIR=${CATALYST_CONFIG_DIR}/templates
 CATALYST_TMP_DIR="${CATALYST_BASE_DIR}/tmp"
-
-declare -a CATALYST_DIRS=( "${CATALYST_BASE_DIR}" "${CATALYST_BUILD_DIR_BASE}" "${CATALYST_TMP_DIR}" "${CATALYST_LOG_DIR}/failed/stale" "${CATALYST_TMP_DIR}/${BUILD_NAME}" "${CATALYST_BUILD_DIR}" "${CATALYST_LOG_DIR}/archive" )
-
-declare -r PID_FILE="${CATALYST_TMP_DIR}/genisys.pid"
-
 CATALYST_LOG_DIR="$(grep ^port_logdir ${CATALYST_CONFIG}|cut -d\" -f2)"
 CATALYST_SNAPSHOT_DIR="$(grep ^snapshot_cache ${CATALYST_CONFIG}|cut -d\" -f2)"
+declare -r PID_FILE="${CATALYST_TMP_DIR}/genisys.pid"
+
+declare -a CATALYST_DIRS=( "${CATALYST_BASE_DIR}" "${CATALYST_BUILD_DIR_BASE}" "${CATALYST_TMP_DIR}" "${CATALYST_SNAPSHOT_DIR}" "${CATALYST_LOG_DIR}" "${CATALYST_LOG_DIR}/failed/stale" "${CATALYST_TMP_DIR}/${BUILD_NAME}" "${CATALYST_BUILD_DIR}" "${CATALYST_LOG_DIR}/archive" )
 
 die () {
   (( $2 == 1 )) && log '2' "$1" && bundleLogs '2' 
