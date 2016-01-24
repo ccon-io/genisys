@@ -324,13 +324,13 @@ sumCheck () {
   case ${method} in
     sha512)
       cd ${dir}
-      log '0' "Verifying ${method} hash for: ${file}"
+      (( VERBOSITY > 0 )) && log '0' "Verifying ${method} hash for: ${file}"
       ${SHA512SUM} -c ${digest} | egrep -e ": OK$" | grep "${file}" &>/dev/null
       retVal=$?
       (( retVal == 0 )) || return "${retVal}"
     ;;
     openssl)
-      log '0' "Verifying ${submethod} hash for: ${file} with: ${method}"
+      (( VERBOSITY > 0 )) && log '0' "Verifying ${submethod} hash for: ${file} with: ${method}"
       hash=$(${OPENSSL} dgst -r -${submethod} ${dir}/${file}|awk '{print $1}')
       grep ${hash} ${dir}/${digest} &> /dev/null
       retVal=$?
@@ -344,7 +344,7 @@ sigCheck () {
   local SCRIPT_SCOPE='2'
 
   (( BUILD_TARGET_STAGE > 1 )) && log '0' "Not verifying GPG Signature, cuz Im lame" && return 0
-  log '0' "Verifying GPG Signature for: $1"
+  (( VERBOSITY > 0 )) && log '0' "Verifying GPG Signature for: $1"
   ${GPG} --verify ${1} 2>&1 | grep "$2" &> /dev/null
   retVal=$?
   (( retVal == 0 )) || return "${retVal}"
@@ -451,10 +451,11 @@ verifySeedStage () {
   (( BUILD_TARGET_STAGE == 1 )) && WORK_DIR=${CATALYST_SNAPSHOT_DIR}
 
   log '0' "Checking for stage files"
+
   for file in "${SEED_STAGE_DIGESTS}" "${SEED_STAGE_CONTENTS}" "${SEED_STAGE_ASC}" "${SEED_STAGE}"
   do
     local SCRIPT_SCOPE='2'
-    log '0' "Checking for: ${file}"
+    (( VERBOSITY > 0 )) && log '0' "Checking for: ${file}"
     if [[ ! -f ${WORK_DIR}/${file} ]] 
     then
       if (( BUILD_TARGET_STAGE == '1' ))
