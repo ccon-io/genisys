@@ -187,9 +187,9 @@ runWrapper () {
 bundleLogs () {
   local SCRIPT_SCOPE='1'
   local CATALYST_LOGS=()
-  local CATALYST_LOG_MASKS=( '*.log' '*.info' '*.err' '*.dbg' )
+  local CATALYST_LOG_MASKS=( '*.log' '*.info' '*.err' )
 
-  (( DEBUG == 1 )) && (( QUIET_OUTPUT == 1 )) && CATALYST_LOG_MASKS+=" *.dbg"
+  (( DEBUG == 1 )) && CATALYST_LOG_MASKS+=" *.dbg"
 
   log 0 "Clearing empty logs"
   find ${CATALYST_LOG_DIR} -type f -empty -exec rm {} \; &> /dev/null
