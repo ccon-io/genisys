@@ -48,6 +48,8 @@ CATALYST_BUILD_DIR_BASE="${CATALYST_BASE_DIR}/builds"
 CATALYST_TEMPLATE_DIR=${CATALYST_CONFIG_DIR}/templates
 CATALYST_TMP_DIR="${CATALYST_BASE_DIR}/tmp"
 
+declare -a CATALYST_DIRS=( "${CATALYST_BASE_DIR}" "${CATALYST_BUILD_DIR_BASE}" "${CATALYST_TMP_DIR}" "${CATALYST_LOG_DIR}/failed/stale" "${CATALYST_TMP_DIR}/${BUILD_NAME}" "${CATALYST_BUILD_DIR}" "${CATALYST_LOG_DIR}/archive" )
+
 declare -r PID_FILE="${CATALYST_TMP_DIR}/genisys.pid"
 
 CATALYST_LOG_DIR="$(grep ^port_logdir ${CATALYST_CONFIG}|cut -d\" -f2)"
@@ -201,7 +203,6 @@ bundleLogs () {
     CATALYST_LOGS+=" $(find ${CATALYST_LOG_DIR} -type f -not -path "*/archive/*" -not -path "*/failed/*" -name ${mask})"
   done
   
-  verifyObject 'dir' "${CATALYST_LOG_DIR}/archive" || die "Could not create archive dir: ${CATALYST_LOG_DIR}/archive" '1'
 
   case $1 in
     1)
@@ -528,11 +529,9 @@ prepCatalyst () {
   if [[ -n ${STALE_LOGS} ]]
   then
     log '0' "Cleaning up stale logs"
-    verifyObject 'dir' "${CATALYST_LOG_DIR}/failed/stale" || die "Could not create stale log dir: ${CATALYST_LOG_DIR}/failed/stale" '1'
     mv ${STALE_LOGS} ${CATALYST_LOG_DIR}/failed/stale/ || die "Could not move stale logs to: ${CATALYST_LOG_DIR}/failed/stale" '1'
   fi
 
-  verifyObject 'dir' "${CATALYST_TMP_DIR}/${BUILD_NAME}" || die "Could not create build dir: ${CATALYST_TMP_DIR}/${BUILD_NAME}" '1'
 
   mount|grep "${CATALYST_TMP_DIR}" &> /dev/null
   (( $? == 0 )) && die "Looks like stuff is still mounted in the chroot. This makes pain. Check: mount | grep ${CATALYST_TMP_DIR}" '1'
@@ -606,7 +605,13 @@ prepCatalyst () {
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
   [[ ${BUILD_TARGET} == stage ]] && prepCatalystStage
   
-  log '0' "Checking dependencies"
+  log 0 "Checking dependencies"
+  for dir in ${CATALYST_DIRS}
+  do
+    (( VERBOSITY > 0 )) && log 0 "Checking for directory: ${dir}"
+    verifyObject 'dir' "${dir}" || die "Error returned while creating: ${dir}"
+  done
+
   verifySeedStage || die "Failed to verify Seed Stage." '1'
   verifyTemplates || die "Could not verify templates" '1'
   
@@ -636,7 +641,6 @@ prepCatalyst () {
     (( VERBOSITY > 0 )) && log '0' "Building Stage 4 for openstack"
   fi
 
-  verifyObject 'dir' "${CATALYST_BUILD_DIR}" || die "Could not create build dir: ${CATALYST_BUILD_DIR}" '1'
 
   if [[ ${REL_TYPE} == 'hardened' ]]
   then
