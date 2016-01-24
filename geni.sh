@@ -503,7 +503,7 @@ prepCatalyst () {
   (( $UID > 0 )) && die "Must run with root" '2'
   echo $$ > ${PID_FILE}
 
-  STALE_LOGS=$(find ${CATALYST_LOG_DIR} -type f -mindepth 1 -maxdepth 1 2> /dev/null)
+  STALE_LOGS=$(find ${CATALYST_LOG_DIR} -mindepth 1 -maxdepth 1 -type f ! -iname "*${RUN_ID}*" 2> /dev/null)
 
   if [[ -n ${STALE_LOGS} ]]
   then
