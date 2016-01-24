@@ -12,7 +12,6 @@ declare -r CATALYST='/usr/bin/catalyst'
 declare -r LOGGER='/usr/bin/logger'
 declare -r EC2_BUNDLE_IMAGE='/usr/bin/ec2-bundle-image'
 
-
 declare -ri CPU_COUNT=$(nproc)
 declare -i BATCH_MODE='0'
 declare -i SCRIPT_SCOPE='0'
@@ -51,8 +50,6 @@ CATALYST_TMP_DIR="${CATALYST_BASE_DIR}/tmp"
 CATALYST_LOG_DIR="$(grep ^port_logdir ${CATALYST_CONFIG}|cut -d\" -f2)"
 CATALYST_SNAPSHOT_DIR="$(grep ^snapshot_cache ${CATALYST_CONFIG}|cut -d\" -f2)"
 declare -r PID_FILE="${CATALYST_TMP_DIR}/genisys.pid"
-
-declare -a CATALYST_DIRS=( "${CATALYST_BASE_DIR}" "${CATALYST_BUILD_DIR_BASE}" "${CATALYST_TMP_DIR}" "${CATALYST_SNAPSHOT_DIR}" "${CATALYST_LOG_DIR}" "${CATALYST_LOG_DIR}/failed/stale" "${CATALYST_TMP_DIR}/${BUILD_NAME}" "${CATALYST_BUILD_DIR}" "${CATALYST_LOG_DIR}/archive" )
 
 die () {
   (( $2 == 1 )) && log '2' "$1" && bundleLogs '2' 
@@ -445,13 +442,21 @@ prepCatalystLiveCD () {
   fi
 }
 
-verifySeedStage () {
+verifyCatalystDeps () {
   local SCRIPT_SCOPE='1'
   WORK_DIR=${CATALYST_BUILD_DIR}
   (( BUILD_TARGET_STAGE == 1 )) && WORK_DIR=${CATALYST_SNAPSHOT_DIR}
 
-  log '0' "Checking for stage files"
+  log '0' "Checking for required directories"
+  for dir in ${CATALYST_DIRS[@]}
+  do
+    local SCRIPT_SCOPE='2'
+    (( VERBOSITY > 0 )) && log 0 "Checking for directory: ${dir}"
+    verifyObject 'dir' "${dir}" || die "Error returned while creating: ${dir}"
+  done
 
+  local SCRIPT_SCOPE='1'
+  log '0' "Checking for stage files"
   for file in "${SEED_STAGE_DIGESTS}" "${SEED_STAGE_CONTENTS}" "${SEED_STAGE_ASC}" "${SEED_STAGE}"
   do
     local SCRIPT_SCOPE='2'
@@ -523,6 +528,9 @@ prepCatalyst () {
   (( $UID > 0 )) && die "Must run with root" '2'
   echo $$ > ${PID_FILE}
 
+  CATALYST_BUILD_DIR="${CATALYST_BUILD_DIR_BASE}/${BUILD_NAME}/${BUILD_TARGET}"
+  declare -a CATALYST_DIRS=( "${CATALYST_BASE_DIR}" "${CATALYST_BUILD_DIR_BASE}" "${CATALYST_TMP_DIR}" "${CATALYST_SNAPSHOT_DIR}" "${CATALYST_LOG_DIR}" "${CATALYST_LOG_DIR}/failed/stale" "${CATALYST_TMP_DIR}/${BUILD_NAME}" "${CATALYST_BUILD_DIR}" "${CATALYST_LOG_DIR}/archive" )
+
   STALE_LOGS=$(find ${CATALYST_LOG_DIR} -mindepth 1 -maxdepth 1 -type f ! -iname "*${RUN_ID}*" 2> /dev/null)
 
   if [[ -n ${STALE_LOGS} ]]
@@ -531,12 +539,8 @@ prepCatalyst () {
     mv ${STALE_LOGS} ${CATALYST_LOG_DIR}/failed/stale/ || die "Could not move stale logs to: ${CATALYST_LOG_DIR}/failed/stale" '1'
   fi
 
-
   mount|grep "${CATALYST_TMP_DIR}" &> /dev/null
   (( $? == 0 )) && die "Looks like stuff is still mounted in the chroot. This makes pain. Check: mount | grep ${CATALYST_TMP_DIR}" '1'
-
-
-  CATALYST_BUILD_DIR="${CATALYST_BUILD_DIR_BASE}/${BUILD_NAME}/${BUILD_TARGET}"
 
   PORTAGE_SNAPSHOT_DATE=$(date +%s -r ${CATALYST_SNAPSHOT_DIR}/portage-latest.tar.bz2)
   PORTAGE_SNAPSHOT_AGE=$(( TIME_NOW - PORTAGE_SNAPSHOT_DATE ))
@@ -592,7 +596,6 @@ prepCatalyst () {
   SEED_STAGE_ASC="${SEED_STAGE_DIGESTS}.asc"
   SEED_STAGE_CONTENTS="${SEED_STAGE}.CONTENTS"
 
-
   VERSION_STAMP_PREFIX="${REL_TYPE}"
   (( SELINUX == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}-selinux"
   (( NO_MULTILIB == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}+nomultilib"
@@ -600,18 +603,11 @@ prepCatalyst () {
 
   SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec"
 
-
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
   [[ ${BUILD_TARGET} == stage ]] && prepCatalystStage
   
   log 0 "Checking dependencies"
-  for dir in ${CATALYST_DIRS}
-  do
-    (( VERBOSITY > 0 )) && log 0 "Checking for directory: ${dir}"
-    verifyObject 'dir' "${dir}" || die "Error returned while creating: ${dir}"
-  done
-
-  verifySeedStage || die "Failed to verify Seed Stage." '1'
+  verifyCatalystDeps || die "Failed to verify Seed Stage." '1'
   verifyTemplates || die "Could not verify templates" '1'
   
   log '1' "Starting run ID: ${RUN_ID} for: ${BUILD_NAME} with a ${REL_TYPE} stack on ${SUB_ARCH} for Stage: ${BUILD_TARGET_STAGE} for delivery by: ${BUILD_TARGET}"
@@ -640,7 +636,6 @@ prepCatalyst () {
     (( VERBOSITY > 0 )) && log '0' "Building Stage 4 for openstack"
   fi
 
-
   if [[ ${REL_TYPE} == 'hardened' ]]
   then
     SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-${REL_TYPE}"
@@ -667,7 +662,6 @@ prepCatalyst () {
     cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.post.template >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
     (( $? == 0 )) || die "Could not manipulate spec file: post" '1'
   fi
-
 
   (( BUILD_TARGET_STAGE == 1 )) && prepCatalystStage1
 
