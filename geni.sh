@@ -65,7 +65,7 @@ die () {
 }
 
 usage () {
-  log 1 "Usage:"
+  log 0 "Usage:"
   echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage)\n\t\t-A { amd64 | x32 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | gentoo } \t\t-- Base profile for this build\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch"
   echo -e "\n\tOptional args:\t-a [aws support] -k [enable kerncache] -n [no-multilib] -o [openstack support] -s [selinux support]"
   echo -e "\t\t\t-c [clear ccache] -d [debug] -p [purge] -q [quiet] -r [clear autoresume] -v [increment verbosity]"
@@ -107,7 +107,7 @@ debug () {
     ( (( QUIET_OUTPUT == 1 )) || (( DEBUG == 1 )) ) && BASH_XTRACEFD=3
     exec 3>| ${CATALYST_LOG_DIR}/catalyst-${RUN_ID}.dbg
     set -x
-    export PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+    export PS4='$(date +%s): +(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
     DEBUG='1'
   fi
 }
@@ -207,16 +207,15 @@ bundleLogs () {
     1)
       CATALYST_LOGS+=" ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       log 0 "Compressing logs"
-      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}.tgz ${CATALYST_LOGS[@]} &> /dev/null
+      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz ${CATALYST_LOGS[@]} &> /dev/null
       (( $? == 0 )) && rm -rf ${CATALYST_LOGS[@]}
     ;;
     2)
-      log 0 "Moving logs to: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}"
-      mkdir -p ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}
+      log 0 "Moving logs to: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}"
+      mkdir -p ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}
       for file in ${CATALYST_LOGS[@]}
       do
-        [[ -f ${file} ]]
-        mv ${file} ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-$(basename ${SPEC_FILE} .spec)-${RUN_ID}/
+        [[ -f ${file} ]] && mv ${file} ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}/
       done
     ;;
   esac
@@ -343,6 +342,8 @@ sumCheck () {
 
 sigCheck () {
   local SCRIPT_SCOPE='2'
+
+  (( BUILD_TARGET_STAGE > 1 )) && log '0' "Not verifying GPG Signature, cuz Im lame" && return 0
   log '0' "Verifying GPG Signature for: $1"
   ${GPG} --verify ${1} 2>&1 | grep "$2" &> /dev/null
   retVal=$?
@@ -407,7 +408,7 @@ runCatalyst () {
     ;;
     build)
       [[ ! ${CATALYST_ARGS} =~ "-f" ]] &&  CATALYST_ARGS="${CATALYST_ARGS} -f"
-      log '1' "Building with args: ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
+      log '1' "Building with args:${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       if (( QUIET_OUTPUT == 1 ))
       then
         local SCRIPT_SCOPE='3'
@@ -446,14 +447,19 @@ prepCatalystLiveCD () {
 
 verifySeedStage () {
   local SCRIPT_SCOPE='1'
+  WORK_DIR=${CATALYST_BUILD_DIR}
+  (( BUILD_TARGET_STAGE == 1 )) && WORK_DIR=${CATALYST_SNAPSHOT_DIR}
+
   log '0' "Checking for stage files"
   for file in "${SEED_STAGE_DIGESTS}" "${SEED_STAGE_CONTENTS}" "${SEED_STAGE_ASC}" "${SEED_STAGE}"
   do
-    if [[ ! -f ${CATALYST_SNAPSHOT_DIR}/${file} ]] 
+    local SCRIPT_SCOPE='2'
+    log '0' "Checking for: ${file}"
+    if [[ ! -f ${WORK_DIR}/${file} ]] 
     then
       if (( BUILD_TARGET_STAGE == '1' ))
       then
-        fetchRemote 'parallel' "${REL_BASE_URL}/${STAGE3_URL_BASE}/${file}" "${CATALYST_SNAPSHOT_DIR}"
+        fetchRemote 'parallel' "${REL_BASE_URL}/${STAGE3_URL_BASE}/${file}" "${WORK_DIR}"
         (( $? == 0 )) || die "Failed to fetch: ${file}" "1"
       else
         die "Cant find: $file" '1'
@@ -461,22 +467,24 @@ verifySeedStage () {
     fi
   done
 
-  log '0' "Verifying Stage Files"
-  if [[ -f ${CATALYST_SNAPSHOT_DIR}/${SEED_STAGE} ]]
+  local SCRIPT_SCOPE='1'
+  log '0' "Verifying stage files"
+  if [[ -f ${WORK_DIR}/${SEED_STAGE} ]]
   then
-    sigCheck "${CATALYST_SNAPSHOT_DIR}/${SEED_STAGE_ASC}" 'Good signature from "Gentoo Linux Release Engineering (Automated Weekly Release Key) <releng@gentoo.org>"'
-    (( $? == 0 )) || die "Failed to verify signature" "1"
+    sigCheck "${WORK_DIR}/${SEED_STAGE_ASC}" 'Good signature from "Gentoo Linux Release Engineering (Automated Weekly Release Key) <releng@gentoo.org>"'
+    (( $? == 0 )) || die "Failed to verify signature" '1'
 
     for file in "${SEED_STAGE}" "${SEED_STAGE_CONTENTS}"
     do
-      sumCheck 'openssl' "${CATALYST_SNAPSHOT_DIR}" "${file}" "${SEED_STAGE_DIGESTS}" sha512
+      sumCheck 'openssl' "${WORK_DIR}" "${file}" "${SEED_STAGE_DIGESTS}" sha512
       (( $? == 0 )) || die "SHA512 checksum failed for: ${file}" "1"
-      sumCheck 'openssl' "${CATALYST_SNAPSHOT_DIR}" "${file}" "${SEED_STAGE_DIGESTS}" whirlpool
+      sumCheck 'openssl' "${WORK_DIR}" "${file}" "${SEED_STAGE_DIGESTS}" whirlpool
       (( $? == 0 )) || die "Whirlpool checksum failed for: ${file}" "1"
     done
   else
-    die "Can't find: ${CATALYST_SNAPSHOT_DIR}/${SEED_STAGE}" '1'
+    die "Can't find: ${WORK_DIR}/${SEED_STAGE}" '1'
   fi
+
 }
 
 prepCatalystStage () {
@@ -485,7 +493,7 @@ prepCatalystStage () {
   STAGE3_TEMPLATES=( "${SPEC_FILE}.header.template" )
   STAGE4_TEMPLATES=( "${SPEC_FILE}.header.template" "${SPEC_FILE}.pkg.template" "${SPEC_FILE}.use.template" )
 
-  if (( ${BUILD_TARGET_STAGE} == '4' ))
+  if (( BUILD_TARGET_STAGE == 4 ))
   then
     cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.pkg.template > ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep
     cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.use.template >> ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep
@@ -493,7 +501,6 @@ prepCatalystStage () {
 }
 
 prepCatalystStage1 () {
-
   local SCRIPT_SCOPE='1'
   log '0' "Starting Catalyst run..."
   if (( BUILD_TARGET_STAGE == 1 ))
@@ -541,22 +548,25 @@ prepCatalyst () {
   STAGE3_URL_BASE="${SUB_ARCH}/autobuilds"
   STAGE3_MANIFEST="latest-stage3-${SUB_ARCH}"
 
-  if (( BUILD_TARGET_STAGE == '1' ))
-  then
-    SEED_STAGE_PREFIX="stage3-${SUB_ARCH}"
-  else
-    SEED_STAGE_PREFIX="stage$(( --BUILD_TARGET_STAGE ))-${SUB_ARCH}"
-  fi
-
   if [[ ${REL_TYPE} == 'hardened' ]] 
   then
-    STAGE3_MANIFEST="latest-${SEED_STAGE_PREFIX}-hardened"
+    STAGE3_MANIFEST="${STAGE3_MANIFEST}-hardened"
     (( NO_MULTILIB == 1 )) && STAGE3_MANIFEST="${STAGE3_MANIFEST}+nomultilib"
   else
     (( NO_MULTILIB == 1 )) && STAGE3_MANIFEST="${STAGE3_MANIFEST}-nomultilib"
   fi
 
   STAGE3_MANIFEST="${STAGE3_MANIFEST}.txt"
+
+  if (( BUILD_TARGET_STAGE == 1 ))
+  then
+    SEED_STAGE_PREFIX="stage3-${SUB_ARCH}"
+    SRC_PATH_PREFIX="stage3-${SUB_ARCH}"
+  else
+    SEED_STAGE_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${SUB_ARCH}"
+    SRC_PATH_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${SUB_ARCH}"
+  fi
+
   DIST_STAGE3_LATEST="$(fetchRemote 'print' ${REL_BASE_URL}/${SUB_ARCH}/autobuilds/${STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
 
   [[ -z ${BUILD_VERSION} ]] && BUILD_VERSION="${DIST_STAGE3_LATEST}"
@@ -577,6 +587,7 @@ prepCatalyst () {
   SEED_STAGE_ASC="${SEED_STAGE_DIGESTS}.asc"
   SEED_STAGE_CONTENTS="${SEED_STAGE}.CONTENTS"
 
+
   VERSION_STAMP_PREFIX="${REL_TYPE}"
   (( SELINUX == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}-selinux"
   (( NO_MULTILIB == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}+nomultilib"
@@ -584,22 +595,13 @@ prepCatalyst () {
 
   SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec"
 
-  if (( ${BUILD_TARGET_STAGE} == '1' ))
-  then
-    SRC_PATH_PREFIX="stage3-${SUB_ARCH}"
-  elif (( ${BUILD_TARGET_STAGE} == '2' ))
-  then
-    SRC_PATH_PREFIX="stage1-${SUB_ARCH}"
-  elif (( ${BUILD_TARGET_STAGE} == '3' ))
-  then
-    SRC_PATH_PREFIX="stage2-${SUB_ARCH}"
-  elif (( ${BUILD_TARGET_STAGE} == '4' ))
-  then
-    SRC_PATH_PREFIX="stage3-${SUB_ARCH}"
-  fi
 
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
   [[ ${BUILD_TARGET} == stage ]] && prepCatalystStage
+  
+  log '0' "Checking dependencies"
+  verifySeedStage || die "Failed to verify Seed Stage." '1'
+  verifyTemplates || die "Could not verify templates" '1'
   
   log '1' "Starting run ID: ${RUN_ID} for: ${BUILD_NAME} with a ${REL_TYPE} stack on ${SUB_ARCH} for Stage: ${BUILD_TARGET_STAGE} for delivery by: ${BUILD_TARGET}"
 
@@ -640,16 +642,15 @@ prepCatalyst () {
 
   SRC_PATH="${BUILD_NAME}/${BUILD_TARGET}/${SRC_PATH_PREFIX}-${DIST_STAGE3_LATEST}"
 
-  verifyTemplates "${SPEC_FILE}" || die "Could not verify templates" '1'
   mangleTemplate 'overwrite' "${SPEC_FILE}.header.template" "SUB_ARCH VERSION_STAMP REL_TYPE REL_PROFILE REL_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET"
   (( $? == 0 )) || die "Could not manipulate spec file: header" '1'
 
-  if ( (( ${BUILD_TARGET_STAGE} == '1' )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == '4' )) && [[ ${BUILD_TARGET} == 'stage' ]] )
+  if ( (( ${BUILD_TARGET_STAGE} == 1 )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == 4 )) && [[ ${BUILD_TARGET} == 'stage' ]] )
   then
     cat ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
   fi
 
-  if ( (( ${BUILD_TARGET_STAGE} == '2' )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == '4' )) && [[ ${BUILD_TARGET} == 'stage' ]] )
+  if ( (( ${BUILD_TARGET_STAGE} == 2 )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == 4 )) && [[ ${BUILD_TARGET} == 'stage' ]] )
   then
     mangleTemplate 'append' "${SPEC_FILE}.boot.template" "REL_TYPE SUB_ARCH BUILD_TARGET TARGET_KERNEL"
     (( $? == 0 )) || die "Could not manipulate spec file: boot" '1'
@@ -658,7 +659,7 @@ prepCatalyst () {
   fi
 
 
-  (( BUILD_TARGET_STAGE == '1' )) && prepCatalystStage1
+  (( BUILD_TARGET_STAGE == 1 )) && prepCatalystStage1
 
   if (( CLEAR_CCACHE == 1 ))
   then
@@ -847,7 +848,7 @@ trap "cleanUp" EXIT
 trap "(( ++VERBOSITY )) && debug" SIGUSR1
 trap "DEBUG=1 && debug" SIGUSR2
 
-RUN_ARGS=$@
+RUN_ARGS="$@"
 
 menuSelect ${RUN_ARGS}
 
