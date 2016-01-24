@@ -451,8 +451,13 @@ verifySeedStage () {
   do
     if [[ ! -f ${CATALYST_SNAPSHOT_DIR}/${file} ]] 
     then
-      fetchRemote 'parallel' "${REL_BASE_URL}/${STAGE3_URL_BASE}/${file}" "${CATALYST_SNAPSHOT_DIR}"
-      (( $? == 0 )) || die "Failed to fetch: ${file}" "1"
+      if (( BUILD_TARGET_STAGE == '1' ))
+      then
+        fetchRemote 'parallel' "${REL_BASE_URL}/${STAGE3_URL_BASE}/${file}" "${CATALYST_SNAPSHOT_DIR}"
+        (( $? == 0 )) || die "Failed to fetch: ${file}" "1"
+      else
+        die "Cant find: $file" '1'
+      fi
     fi
   done
 
