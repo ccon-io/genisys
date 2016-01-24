@@ -54,8 +54,8 @@ CATALYST_LOG_DIR="$(grep ^port_logdir ${CATALYST_CONFIG}|cut -d\" -f2)"
 CATALYST_SNAPSHOT_DIR="$(grep ^snapshot_cache ${CATALYST_CONFIG}|cut -d\" -f2)"
 
 die () {
-  (( $2 == 1 )) && log '2' "$1"
-  (( $2 == 2 )) && log '4' "$1" && usage
+  (( $2 == 1 )) && log '2' "$1" && bundleLogs '2' 
+  (( $2 == 2 )) && log '4' "$1" && usage && exit
   if (( $2 == 0 ))
   then
     timeElapsed "START_TIME"
@@ -144,7 +144,7 @@ cleanUp () {
     log 2 "Zombie Process Identified: $pid (take its head off)"
   done
 
-  [[ -f ${PID_FILE} ]] && rm ${PID_FILE}
+  [[ -w ${PID_FILE} ]] && rm ${PID_FILE}
 }
 
 verifyObject () {
@@ -421,7 +421,7 @@ runCatalyst () {
         retVal=$?
       fi
 
-      (( retVal > 0 )) && bundleLogs '2' && return "${retVal}"
+      (( retVal > 0 )) && return "${retVal}"
       bundleLogs '1'
       return 0
     ;;
@@ -830,13 +830,13 @@ main() {
   fi
 }
 
-
-trap "echo && bundleLogs '2' && die 'SIGINT Caught' 1" SIGINT 
-trap "echo && bundleLogs '2' && die 'SIGTERM Caught' 1" SIGTERM
-trap "echo && bundleLogs '2' && die 'SIGHUP Caught' 1" SIGHUP
+trap "echo && die 'SIGINT Caught' 1" SIGINT 
+trap "echo && die 'SIGTERM Caught' 1" SIGTERM
+trap "echo && die 'SIGHUP Caught' 1" SIGHUP
 trap "cleanUp" EXIT
 trap "(( ++VERBOSITY )) && debug" SIGUSR1
 trap "DEBUG=1 && debug" SIGUSR2
+
 RUN_ARGS=$@
 
 menuSelect ${RUN_ARGS}
