@@ -187,7 +187,7 @@ runWrapper () {
 bundleLogs () {
   local SCRIPT_SCOPE='1'
   local CATALYST_LOGS=()
-  local CATALYST_LOG_MASKS=( '*.log' '*.info' '*.err' )
+  local CATALYST_LOG_MASKS=( '*.log' '*.info' '*.err' '*.dbg' )
 
   (( DEBUG == 1 )) && (( QUIET_OUTPUT == 1 )) && CATALYST_LOG_MASKS+=" *.dbg"
 
