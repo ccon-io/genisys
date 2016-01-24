@@ -444,6 +444,36 @@ prepCatalystLiveCD () {
   fi
 }
 
+verifySeedStage () {
+  local SCRIPT_SCOPE='1'
+  log '0' "Checking for stage files"
+  for file in "${SEED_STAGE_DIGESTS}" "${SEED_STAGE_CONTENTS}" "${SEED_STAGE_ASC}" "${SEED_STAGE}"
+  do
+    if [[ ! -f ${CATALYST_SNAPSHOT_DIR}/${file} ]] 
+    then
+      fetchRemote 'parallel' "${REL_BASE_URL}/${STAGE3_URL_BASE}/${file}" "${CATALYST_SNAPSHOT_DIR}"
+      (( $? == 0 )) || die "Failed to fetch: ${file}" "1"
+    fi
+  done
+
+  log '0' "Verifying Stage Files"
+  if [[ -f ${CATALYST_SNAPSHOT_DIR}/${SEED_STAGE} ]]
+  then
+    sigCheck "${CATALYST_SNAPSHOT_DIR}/${SEED_STAGE_ASC}" 'Good signature from "Gentoo Linux Release Engineering (Automated Weekly Release Key) <releng@gentoo.org>"'
+    (( $? == 0 )) || die "Failed to verify signature" "1"
+
+    for file in "${SEED_STAGE}" "${SEED_STAGE_CONTENTS}"
+    do
+      sumCheck 'openssl' "${CATALYST_SNAPSHOT_DIR}" "${file}" "${SEED_STAGE_DIGESTS}" sha512
+      (( $? == 0 )) || die "SHA512 checksum failed for: ${file}" "1"
+      sumCheck 'openssl' "${CATALYST_SNAPSHOT_DIR}" "${file}" "${SEED_STAGE_DIGESTS}" whirlpool
+      (( $? == 0 )) || die "Whirlpool checksum failed for: ${file}" "1"
+    done
+  else
+    die "Can't find: ${CATALYST_SNAPSHOT_DIR}/${SEED_STAGE}" '1'
+  fi
+}
+
 prepCatalystStage () {
   STAGE1_TEMPLATES=( "${SPEC_FILE}.header.template" )
   STAGE2_TEMPLATES=( "${SPEC_FILE}.header.template" )
@@ -458,35 +488,6 @@ prepCatalystStage () {
 }
 
 prepCatalystStage1 () {
-  SEED_STAGE="${DIST_STAGE3_BZ2}"
-  local SCRIPT_SCOPE='1'
-  log '0' "Checking for stage files"
-  for file in "${DIST_STAGE3_DIGESTS}" "${DIST_STAGE3_CONTENTS}" "${DIST_STAGE3_ASC}" "${DIST_STAGE3_BZ2}"
-  do
-    if [[ ! -f ${CATALYST_BUILD_DIR}/${file} ]] 
-    then
-      fetchRemote 'parallel' "${DIST_BASE_URL}/${DIST_STAGE3_PATH_BASE}/${file}" "${CATALYST_BUILD_DIR}"
-      (( $? == 0 )) || die "Failed to fetch: ${file}" "1"
-    fi
-  done
-
-  local SCRIPT_SCOPE='1'
-  log '0' "Verifying Stage Files"
-  if [[ -f ${CATALYST_BUILD_DIR}/${DIST_STAGE3_BZ2} ]]
-  then
-    sigCheck "${CATALYST_BUILD_DIR}/${DIST_STAGE3_ASC}" 'Good signature from "Gentoo Linux Release Engineering (Automated Weekly Release Key) <releng@gentoo.org>"'
-    (( $? == 0 )) || die "Failed to verify signature" "1"
-
-    for file in "${DIST_STAGE3_BZ2}" "${DIST_STAGE3_CONTENTS}"
-    do
-      sumCheck 'openssl' "${CATALYST_BUILD_DIR}" "${file}" "${DIST_STAGE3_DIGESTS}" sha512
-      (( $? == 0 )) || die "SHA512 checksum failed for: ${file}" "1"
-      sumCheck 'openssl' "${CATALYST_BUILD_DIR}" "${file}" "${DIST_STAGE3_DIGESTS}" whirlpool
-      (( $? == 0 )) || die "Whirlpool checksum failed for: ${file}" "1"
-    done
-  else
-    die "Can't find: ${CATALYST_BUILD_DIR}/${DIST_STAGE3_BZ2}" '1'
-  fi
 
   local SCRIPT_SCOPE='1'
   log '0' "Starting Catalyst run..."
@@ -531,42 +532,45 @@ prepCatalyst () {
   #todo: make this conditional
   REL_SNAPSHOT='latest'
 
-  DIST_BASE_URL='http://distfiles.gentoo.org/releases'
-  DIST_STAGE3_PREFIX="stage3-${SUB_ARCH}"
-  DIST_STAGE3_PATH_BASE="${SUB_ARCH}/autobuilds"
-  DIST_STAGE3_MANIFEST="latest-stage3-${SUB_ARCH}"
+  REL_BASE_URL='http://distfiles.gentoo.org/releases'
+  STAGE3_URL_BASE="${SUB_ARCH}/autobuilds"
+  STAGE3_MANIFEST="latest-stage3-${SUB_ARCH}"
+
+  if (( BUILD_TARGET_STAGE == '1' ))
+  then
+    SEED_STAGE_PREFIX="stage3-${SUB_ARCH}"
+  else
+    SEED_STAGE_PREFIX="stage$(( --BUILD_TARGET_STAGE ))-${SUB_ARCH}"
+  fi
 
   if [[ ${REL_TYPE} == 'hardened' ]] 
   then
-    DIST_STAGE3_MANIFEST="latest-${DIST_STAGE3_PREFIX}-hardened"
-    (( NO_MULTILIB == 1 )) && DIST_STAGE3_MANIFEST="${DIST_STAGE3_MANIFEST}+nomultilib"
+    STAGE3_MANIFEST="latest-${SEED_STAGE_PREFIX}-hardened"
+    (( NO_MULTILIB == 1 )) && STAGE3_MANIFEST="${STAGE3_MANIFEST}+nomultilib"
   else
-    (( NO_MULTILIB == 1 )) && DIST_STAGE3_MANIFEST="${DIST_STAGE3_MANIFEST}-nomultilib"
+    (( NO_MULTILIB == 1 )) && STAGE3_MANIFEST="${STAGE3_MANIFEST}-nomultilib"
   fi
 
-  DIST_STAGE3_MANIFEST="${DIST_STAGE3_MANIFEST}.txt"
-  DIST_STAGE3_LATEST="$(fetchRemote 'print' ${DIST_BASE_URL}/${SUB_ARCH}/autobuilds/${DIST_STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
+  STAGE3_MANIFEST="${STAGE3_MANIFEST}.txt"
+  DIST_STAGE3_LATEST="$(fetchRemote 'print' ${REL_BASE_URL}/${SUB_ARCH}/autobuilds/${STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
 
   [[ -z ${BUILD_VERSION} ]] && BUILD_VERSION="${DIST_STAGE3_LATEST}"
 
-  DIST_STAGE3_PATH_BASE="${DIST_STAGE3_PATH_BASE}/${BUILD_VERSION}"
+  STAGE3_URL_BASE="${STAGE3_URL_BASE}/${BUILD_VERSION}"
 
   if [[ ${REL_TYPE} == 'hardened' ]] 
   then
-    DIST_STAGE3_PATH_BASE="${DIST_STAGE3_PATH_BASE}/hardened"
-    DIST_STAGE3_PREFIX="${DIST_STAGE3_PREFIX}-${REL_TYPE}"
-    (( NO_MULTILIB == 1 )) && DIST_STAGE3_PREFIX="${DIST_STAGE3_PREFIX}+nomultilib"
+    STAGE3_URL_BASE="${STAGE3_URL_BASE}/hardened"
+    SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}-${REL_TYPE}"
+    (( NO_MULTILIB == 1 )) && SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}+nomultilib"
   else
-    (( NO_MULTILIB == 1 )) && DIST_STAGE3_PREFIX="${DIST_STAGE3_PREFIX}-nomultilib"
+    (( NO_MULTILIB == 1 )) && SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}-nomultilib"
   fi
 
-  DIST_STAGE3_DIGESTS="${DIST_STAGE3_PREFIX}-${DIST_STAGE3_LATEST}.tar.bz2.DIGESTS"
-  DIST_STAGE3_CONTENTS="${DIST_STAGE3_PREFIX}-${DIST_STAGE3_LATEST}.tar.bz2.CONTENTS"
-  DIST_STAGE3_ASC="${DIST_STAGE3_PREFIX}-${DIST_STAGE3_LATEST}.tar.bz2.DIGESTS.asc"
-  DIST_STAGE3_BZ2="${DIST_STAGE3_PREFIX}-${DIST_STAGE3_LATEST}.tar.bz2"
-
-  DIST_STAGE1_BZ2="${DIST_STAGE3_BZ2/stage3/stage1}"
-  SEED_STAGE="${DIST_STAGE1_BZ2}"
+  SEED_STAGE="${SEED_STAGE_PREFIX}-${DIST_STAGE3_LATEST}.tar.bz2"
+  SEED_STAGE_DIGESTS="${SEED_STAGE}.DIGESTS"
+  SEED_STAGE_ASC="${SEED_STAGE_DIGESTS}.asc"
+  SEED_STAGE_CONTENTS="${SEED_STAGE}.CONTENTS"
 
   VERSION_STAMP_PREFIX="${REL_TYPE}"
   (( SELINUX == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}-selinux"
@@ -647,6 +651,7 @@ prepCatalyst () {
     cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.post.template >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
     (( $? == 0 )) || die "Could not manipulate spec file: post" '1'
   fi
+
 
   (( BUILD_TARGET_STAGE == '1' )) && prepCatalystStage1
 
