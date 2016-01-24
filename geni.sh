@@ -257,7 +257,7 @@ mangleTemplate () {
   touch ${CATALYST_BUILD_DIR}/${SPEC_FILE} || return 1
 
   local SCRIPT_SCOPE='1'
-  log '0' "Mangling template: ${template}"
+  (( VERBOSITY > 0 )) && log '0' "Mangling template: ${template}"
   
   if [[ "$1" == "overwrite" ]] 
   then
@@ -383,7 +383,7 @@ awsBundleImage () {
 
 runCatalyst () {
   local method="$1"
-  local SCRIPT_SCOPE='2'
+  local SCRIPT_SCOPE='1'
   local SCRIPT_OUT="${CATALYST_LOG_DIR}/catalyst-${BUILD_TARGET}-${method}-${RUN_ID}.info"
   local SCRIPT_ERR="${CATALYST_LOG_DIR}/catalyst-${BUILD_TARGET}-${method}-${RUN_ID}.err"
   local SCRIPT_FLAGS="-f -e -q -c"
@@ -411,7 +411,7 @@ runCatalyst () {
       log '1' "Building with args:${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       if (( QUIET_OUTPUT == 1 ))
       then
-        local SCRIPT_SCOPE='3'
+        local SCRIPT_SCOPE='2'
         log '3' "Running silently..."
         ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}" ${SCRIPT_OUT} 2> ${SCRIPT_ERR} &> /dev/null ) &
         jobWait $!
@@ -486,6 +486,12 @@ verifySeedStage () {
     die "Can't find: ${WORK_DIR}/${SEED_STAGE}" '1'
   fi
 
+  if (( BUILD_TARGET_STAGE == 1 ))
+  then
+    [[ -f ${CATALYST_BUILD_DIR}/${SEED_STAGE} ]] && return 0
+    (( VERBOSITY > 0 )) && log '0' "Copying seed stage to build dir"
+    cp ${WORK_DIR}/${SEED_STAGE} ${CATALYST_BUILD_DIR}/
+  fi
 }
 
 prepCatalystStage () {
@@ -609,25 +615,25 @@ prepCatalyst () {
   if (( SELINUX == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    log '0' "SELinux Enabled"
+    (( VERBOSITY > 0 )) && log '0' "SELinux Enabled"
   fi
 
   if (( NO_MULTILIB == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    log '0' "Multilib Disabled"
+    (( VERBOSITY > 0 )) && log '0' "Multilib Disabled"
   fi
 
   if (( AWS_SUPPORT == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    log '0' "Building Stage 4 for aws"
+    (( VERBOSITY > 0 )) && log '0' "Building Stage 4 for aws"
   fi
 
   if (( OPENSTACK_SUPPORT == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    log '0' "Building Stage 4 for openstack"
+    (( VERBOSITY > 0 )) && log '0' "Building Stage 4 for openstack"
   fi
 
   verifyObject 'dir' "${CATALYST_BUILD_DIR}" || die "Could not create build dir: ${CATALYST_BUILD_DIR}" '1'
