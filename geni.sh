@@ -605,6 +605,15 @@ prepCatalyst () {
   VERSION_STAMP="${VERSION_STAMP_PREFIX}-${DIST_STAGE3_LATEST}"
 
   SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec"
+  if (( AWS_SUPPORT == 1 ))
+  then
+    SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec.aws"
+  fi
+
+  if (( OPENSTACK_SUPPORT == 1 ))
+  then
+    SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec.ostack"
+  fi
 
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
   [[ ${BUILD_TARGET} == stage ]] && prepCatalystStage
@@ -630,13 +639,13 @@ prepCatalyst () {
   if (( AWS_SUPPORT == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    (( VERBOSITY > 0 )) && log '0' "Building Stage 4 for aws"
+    (( VERBOSITY > 0 )) && log '0' "Building Stage for aws"
   fi
 
   if (( OPENSTACK_SUPPORT == 1 ))
   then
     local SCRIPT_SCOPE='1'
-    (( VERBOSITY > 0 )) && log '0' "Building Stage 4 for openstack"
+    (( VERBOSITY > 0 )) && log '0' "Building Stage for openstack"
   fi
 
   if [[ ${REL_TYPE} == 'hardened' ]]
@@ -802,6 +811,7 @@ menuSelect () {
   (( VERBOSITY > 0 || DEBUG == 1 )) && debug
 
   [[ -n ${BUILD_TARGET} ]] || die "Target Unset" '1'
+  (( OPENSTACK_SUPPORT == 1 && AWS_SUPPORT == 1 )) && die "Only one of -a or -o can be set" '2'
   
   if [[ ${BUILD_TARGET}='stage' || ${BUILD_TARGET}='livecd' ]]
   then
@@ -829,6 +839,7 @@ main() {
     then
       if (( AWS_SUPPORT > 0 || OPENSTACK_SUPPORT > 0 ))
       then
+        [[ ${BUILD_TARGET} == "livecd" ]] && die "Livecd target currently not supported" '2'
         runWrapper "1 2 3 4"
       fi
       runWrapper "1 2 3"
