@@ -459,6 +459,8 @@ verifyCatalystDeps () {
   log '0' "Checking for stage files"
   for file in "${SEED_STAGE_DIGESTS}" "${SEED_STAGE_CONTENTS}" "${SEED_STAGE_ASC}" "${SEED_STAGE}"
   do
+    #Fix Me... sign your builds!
+    (( BUILD_TARGET_STAGE > 1 )) && [[ ${file} =~ "asc"$ ]] && continue
     local SCRIPT_SCOPE='2'
     (( VERBOSITY > 0 )) && log '0' "Checking for: ${file}"
     if [[ ! -f ${WORK_DIR}/${file} ]] 
