@@ -605,12 +605,12 @@ prepCatalyst () {
   VERSION_STAMP="${VERSION_STAMP_PREFIX}-${DIST_STAGE3_LATEST}"
 
   SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec"
-  if (( AWS_SUPPORT == 1 ))
+  if (( AWS_SUPPORT == 1 && BUILD_TARGET_STAGE == 4 ))
   then
     SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec.aws"
   fi
 
-  if (( OPENSTACK_SUPPORT == 1 ))
+  if (( OPENSTACK_SUPPORT == 1 && BUILD_TARGET_STAGE == 4 ))
   then
     SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec.ostack"
   fi
