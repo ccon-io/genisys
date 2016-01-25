@@ -360,6 +360,7 @@ jobWait() {
 
   while (( $? == 0 ))
   do
+    [[ $- =~ "i" ]] || break
     local temp=${spinstr#?}
     printf " [%c]  " "$spinstr"
     local spinstr=$temp${spinstr%"$temp"}
