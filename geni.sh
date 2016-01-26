@@ -31,10 +31,10 @@ declare -r COLOUR_RST='\033[0m'
 declare BUILD_TARGET_STAGE=""
 declare BUILD_TARGET=""
 declare BUILD_VERSION=""
-declare SUB_ARCH=""
+declare BUILD_ARCH=""
 declare TARGET_KERNEL=""
 declare BUILD_NAME=""
-declare REL_TYPE=""
+declare BASE_PROFILE=""
 declare BUILD_TARGET_STAGE=""
 
 CATALYST_USERS=""
@@ -64,7 +64,7 @@ die () {
 
 usage () {
   log 0 "Usage:"
-  echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage)\n\t\t-A { amd64 | x32 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | gentoo } \t\t-- Base profile for this build\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch"
+  echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage)\n\t\t-A { amd64 | x32 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | vanilla } \t\t-- Base profile for this build\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch"
   echo -e "\n\tOptional args:\t-a [aws support] -k [enable kerncache] -n [no-multilib] -o [openstack support] -s [selinux support]"
   echo -e "\t\t\t-c [clear ccache] -d [debug] -p [purge] -q [quiet] -r [clear autoresume] -v [increment verbosity]"
   echo
@@ -376,7 +376,7 @@ jobWait() {
 
 awsBundleImage () {
   verifyObject 'dir' "/${IMAGE_STORE}/ami/${REL_NAME}/${BUILD_VER}/"
-  ${EC2_BUNDLE_IMAGE} -k ${CATALYST_CONFIG_DIR}/keys/key.pem -c /etc/ec2/amitools/cert-ec2.pem  -u ${AWS_ACCOUNT_ID} -i ${CATALYST_BASE_DIR}/iso/${REL_NAME}-${SUB_ARCH}-${REL_TYPE}-installer-${BUILD_VER}.iso -d ${IMAGE_STORE}/ami/${REL_NAME}/${BUILD_VER}/ -r x86_64
+  ${EC2_BUNDLE_IMAGE} -k ${CATALYST_CONFIG_DIR}/keys/key.pem -c /etc/ec2/amitools/cert-ec2.pem  -u ${AWS_ACCOUNT_ID} -i ${CATALYST_BASE_DIR}/iso/${REL_NAME}-${BUILD_ARCH}-${BASE_PROFILE}-installer-${BUILD_VER}.iso -d ${IMAGE_STORE}/ami/${REL_NAME}/${BUILD_VER}/ -r x86_64
 }
 
 runCatalyst () {
@@ -557,7 +557,7 @@ prepCatalyst () {
   PORTAGE_SNAPSHOT_AGE=$(( TIME_NOW - PORTAGE_SNAPSHOT_DATE ))
   PORTAGE_SNAPSHOT_AGE_MAX='14400'
 
-  REL_PROFILE="${REL_TYPE}/linux/${SUB_ARCH}"
+  REL_PROFILE="${BASE_PROFILE}/linux/${BUILD_ARCH}"
   (( NO_MULTILIB == 1 )) &&  REL_PROFILE="${REL_PROFILE}/no-multilib"
   (( SELINUX == 1 )) &&  REL_PROFILE="${REL_PROFILE}/selinux"
 
@@ -565,10 +565,10 @@ prepCatalyst () {
   REL_SNAPSHOT='latest'
 
   REL_BASE_URL='http://distfiles.gentoo.org/releases'
-  STAGE3_URL_BASE="${SUB_ARCH}/autobuilds"
-  STAGE3_MANIFEST="latest-stage3-${SUB_ARCH}"
+  STAGE3_URL_BASE="${BUILD_ARCH}/autobuilds"
+  STAGE3_MANIFEST="latest-stage3-${BUILD_ARCH}"
 
-  if [[ ${REL_TYPE} == 'hardened' ]] 
+  if [[ ${BASE_PROFILE} == 'hardened' ]] 
   then
     STAGE3_MANIFEST="${STAGE3_MANIFEST}-hardened"
     (( NO_MULTILIB == 1 )) && STAGE3_MANIFEST="${STAGE3_MANIFEST}+nomultilib"
@@ -580,23 +580,23 @@ prepCatalyst () {
 
   if (( BUILD_TARGET_STAGE == 1 ))
   then
-    SEED_STAGE_PREFIX="stage3-${SUB_ARCH}"
-    SRC_PATH_PREFIX="stage3-${SUB_ARCH}"
+    SEED_STAGE_PREFIX="stage3-${BUILD_ARCH}"
+    SRC_PATH_PREFIX="stage3-${BUILD_ARCH}"
   else
-    SEED_STAGE_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${SUB_ARCH}"
-    SRC_PATH_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${SUB_ARCH}"
+    SEED_STAGE_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}"
+    SRC_PATH_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}"
   fi
 
-  DIST_STAGE3_LATEST="$(fetchRemote 'print' ${REL_BASE_URL}/${SUB_ARCH}/autobuilds/${STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
+  DIST_STAGE3_LATEST="$(fetchRemote 'print' ${REL_BASE_URL}/${BUILD_ARCH}/autobuilds/${STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
 
   [[ -z ${BUILD_VERSION} ]] && BUILD_VERSION="${DIST_STAGE3_LATEST}"
 
   STAGE3_URL_BASE="${STAGE3_URL_BASE}/${BUILD_VERSION}"
 
-  if [[ ${REL_TYPE} == 'hardened' ]] 
+  if [[ ${BASE_PROFILE} == 'hardened' ]] 
   then
     STAGE3_URL_BASE="${STAGE3_URL_BASE}/hardened"
-    SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}-${REL_TYPE}"
+    SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}-${BASE_PROFILE}"
     (( NO_MULTILIB == 1 )) && SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}+nomultilib"
   else
     (( NO_MULTILIB == 1 )) && SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}-nomultilib"
@@ -607,7 +607,7 @@ prepCatalyst () {
   SEED_STAGE_ASC="${SEED_STAGE_DIGESTS}.asc"
   SEED_STAGE_CONTENTS="${SEED_STAGE}.CONTENTS"
 
-  VERSION_STAMP_PREFIX="${REL_TYPE}"
+  VERSION_STAMP_PREFIX="${BASE_PROFILE}"
   (( SELINUX == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}-selinux"
   (( NO_MULTILIB == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}+nomultilib"
   VERSION_STAMP="${VERSION_STAMP_PREFIX}-${DIST_STAGE3_LATEST}"
@@ -630,7 +630,7 @@ prepCatalyst () {
   verifyCatalystDeps || die "Failed to verify Seed Stage." '1'
   verifyTemplates || die "Could not verify templates" '1'
   
-  log '1' "Starting run ID: ${RUN_ID} for: ${BUILD_NAME} with a ${REL_TYPE} stack on ${SUB_ARCH} for Stage: ${BUILD_TARGET_STAGE} for delivery by: ${BUILD_TARGET}"
+  log '1' "Starting run ID: ${RUN_ID} for: ${BUILD_NAME} with a ${BASE_PROFILE} stack on ${BUILD_ARCH} for Stage: ${BUILD_TARGET_STAGE} for delivery by: ${BUILD_TARGET}"
 
   if (( SELINUX == 1 ))
   then
@@ -656,9 +656,9 @@ prepCatalyst () {
     (( VERBOSITY > 0 )) && log '0' "Building Stage for openstack"
   fi
 
-  if [[ ${REL_TYPE} == 'hardened' ]]
+  if [[ ${BASE_PROFILE} == 'hardened' ]]
   then
-    SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-${REL_TYPE}"
+    SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-${BASE_PROFILE}"
     (( SELINUX == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-selinux"
     (( NO_MULTILIB == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}+nomultilib"
   else
@@ -667,7 +667,7 @@ prepCatalyst () {
 
   SRC_PATH="${BUILD_NAME}/${BUILD_TARGET}/${SRC_PATH_PREFIX}-${DIST_STAGE3_LATEST}"
 
-  mangleTemplate 'overwrite' "${SPEC_FILE}.header.template" "SUB_ARCH VERSION_STAMP REL_TYPE REL_PROFILE REL_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET"
+  mangleTemplate 'overwrite' "${SPEC_FILE}.header.template" "BUILD_ARCH VERSION_STAMP BASE_PROFILE REL_PROFILE REL_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET"
   (( $? == 0 )) || die "Could not manipulate spec file: header" '1'
 
   if ( (( ${BUILD_TARGET_STAGE} == 1 )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == 4 )) && [[ ${BUILD_TARGET} == 'stage' ]] )
@@ -677,7 +677,7 @@ prepCatalyst () {
 
   if ( (( ${BUILD_TARGET_STAGE} == 2 )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == 4 )) && [[ ${BUILD_TARGET} == 'stage' ]] )
   then
-    mangleTemplate 'append' "${SPEC_FILE}.boot.template" "REL_TYPE SUB_ARCH BUILD_TARGET TARGET_KERNEL"
+    mangleTemplate 'append' "${SPEC_FILE}.boot.template" "BASE_PROFILE BUILD_ARCH BUILD_TARGET TARGET_KERNEL"
     (( $? == 0 )) || die "Could not manipulate spec file: boot" '1'
     cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.post.template >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
     (( $? == 0 )) || die "Could not manipulate spec file: post" '1'
@@ -725,7 +725,7 @@ menuSelect () {
   do
     case ${opt} in
       A)
-        SUB_ARCH="${OPTARG}"
+        BUILD_ARCH="${OPTARG}"
       ;;
       K)
         TARGET_KERNEL="${OPTARG}"
@@ -734,7 +734,7 @@ menuSelect () {
         BUILD_NAME="${OPTARG}"
       ;;
       P)
-        REL_TYPE="${OPTARG}"
+        BASE_PROFILE="${OPTARG}"
       ;;
       S)
         [[ -z ${BUILD_TARGET_STAGE} ]] && BUILD_TARGET_STAGE="${OPTARG}"
@@ -820,14 +820,16 @@ menuSelect () {
 
   [[ -n ${BUILD_TARGET} ]] || die "Target Unset" '1'
   (( OPENSTACK_SUPPORT == 1 && AWS_SUPPORT == 1 )) && die "Only one of -a or -o can be set" '2'
+
+  [[ ${BASE_PROFILE} == 'hardened' || ${BASE_PROFILE} == 'vanilla' ]] || die "Unknown profile: ${BASE_PROFILE}" '2'
   
   if [[ ${BUILD_TARGET}='stage' || ${BUILD_TARGET}='livecd' ]]
   then
         [[ -n ${BUILD_TARGET_STAGE} ]] || die "Stage (-S) unset" '2'
-        [[ -n ${SUB_ARCH} ]] || die "ARCH (-A) unset" '2'
+        [[ -n ${BUILD_ARCH} ]] || die "ARCH (-A) unset" '2'
         [[ -n ${TARGET_KERNEL} ]] || die "Target kernel (-K) Unset" '2'
         [[ -n ${BUILD_NAME} ]] || die "Build name (-N) unset" '2'
-        [[ -n ${REL_TYPE} ]] || die "Profile (-P) unset" '2'
+        [[ -n ${BASE_PROFILE} ]] || die "Profile (-P) unset" '2'
   fi
   main
 }
