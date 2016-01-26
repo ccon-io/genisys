@@ -204,7 +204,7 @@ bundleLogs () {
     1)
       CATALYST_LOGS+=" ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       log 0 "Compressing logs"
-      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz ${CATALYST_LOGS[@]} &> /dev/null
+      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz -C ${CATALYST_BASE_DIR} ${CATALYST_LOGS[@]} &> /dev/null
       (( $? == 0 )) && rm -rf ${CATALYST_LOGS[@]}
     ;;
     2)
