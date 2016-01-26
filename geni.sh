@@ -397,7 +397,11 @@ runCatalyst () {
         ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} latest" ${SCRIPT_OUT}  2> ${SCRIPT_ERR} &> /dev/null ) &
         jobWait $!
         retVal=$?
-        (( retVal > 0 )) && cat ${SCRIPT_OUT} && log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
+        if (( retVal > 0 ))
+        then
+          [[ $- =~ "i" ]] && cat ${SCRIPT_OUT}
+          log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
+        fi
       else
         ${CATALYST} ${CATALYST_ARGS} latest
         retVal=$?
@@ -414,7 +418,11 @@ runCatalyst () {
         ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}" ${SCRIPT_OUT} 2> ${SCRIPT_ERR} &> /dev/null ) &
         jobWait $!
         retVal=$?
-        (( retVal > 0 )) && cat ${SCRIPT_OUT} && log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
+        if (( retVal > 0 ))
+        then
+          [[ $- =~ "i" ]] && cat ${SCRIPT_OUT}
+          log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
+        fi
       else
         ${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}
         retVal=$?
