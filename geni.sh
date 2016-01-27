@@ -68,7 +68,7 @@ die () {
 
 usage () {
   log 0 "Usage:"
-  echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage or 'all' for either)\n\t\t-A { amd64 | x32 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | vanilla } \t\t-- Base profile for this build\n\t\t-R { snapshot } \t\t\t-- ID of Portage snapshot to use (latest if omitted)\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch (latest if omitted)"
+  echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage or 'all' for either)\n\t\t-A { amd64 | x86 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | vanilla } \t\t-- Base profile for this build\n\t\t-R { snapshot } \t\t\t-- ID of Portage snapshot to use (latest if omitted)\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch (latest if omitted)"
   echo -e "\n\tOptional args:\t-a [aws support]\t-d [docker support]\t-k [enable kerncache]\t-o [openstack support]\t-s [selinux support]"
   echo -e "\t\t\t-c [clear ccache]\t-n [no-multilib]\t-p [purge last build]\t-q [quiet output]\t-r [clear autoresume]"
   echo -e "\t\t\t-x [debug output]\t-v [increment verbosity]"
