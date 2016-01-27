@@ -22,6 +22,7 @@ declare -i CLEAR_CCACHE='0'
 declare -i QUIET_OUTPUT='0'
 declare -i NO_MULTILIB='0'
 declare -i SELINUX='0'
+declare -i DOCKER_SUPPORT='0'
 declare -i AWS_SUPPORT='0'
 declare -i OPENSTACK_SUPPORT='0'
 declare -i TAKE_SNAPSHOT='1'
@@ -583,7 +584,7 @@ prepCatalyst () {
     SRC_PATH_PREFIX="stage3-${BUILD_ARCH}"
   else
     SEED_STAGE_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}-${BASE_PROFILE}"
-    SRC_PATH_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}"
+    SRC_PATH_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}-${BASE_PROFILE}"
   fi
 
   DIST_STAGE3_LATEST="$(fetchRemote 'print' ${DIST_BASE_URL}/${BUILD_ARCH}/autobuilds/${STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
@@ -655,7 +656,6 @@ prepCatalyst () {
 
   if [[ ${BASE_PROFILE} == 'hardened' ]]
   then
-    SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-${BASE_PROFILE}"
     (( SELINUX == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-selinux"
     (( NO_MULTILIB == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}+nomultilib"
   else
@@ -785,7 +785,8 @@ menuSelect () {
         NO_MULTILIB='1'
       ;;
       p)
-        [[ ! ${CATALYST_ARGS} =~ "-p -a" ]] && CATALYST_ARGS="${CATALYST_ARGS} -p -a"
+        [[ ! ${CATALYST_ARGS} =~ "-p" ]] && CATALYST_ARGS="${CATALYST_ARGS} -p"
+        [[ ! ${CATALYST_ARGS} =~ "-a" ]] && CATALYST_ARGS="${CATALYST_ARGS} -a"
         CLEAR_CCACHE='1'
       ;;
       q)
