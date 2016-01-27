@@ -1,5 +1,0 @@
-livecd/use:
-  livecd
-  loop-aes
-  deblob
-  -X

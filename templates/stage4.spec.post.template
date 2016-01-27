@@ -1,9 +1,0 @@
-stage4/users: ###CATALYST_USERS###
-stage4/fsscript: /etc/catalyst/scripts/stage4-post.sh
-stage4/root_overlay: /etc/catalyst/overlays/root/
-stage4/rcadd:
-  acpid|default
-  cronie|default
-  dhcpcd|default
-  net.lo|default
-  rsyslog|default

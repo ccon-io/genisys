@@ -1,5 +1,0 @@
-boot/kernel: gentoo
-boot/kernel/gentoo/sources: ###REL_TYPE###-sources
-boot/kernel/gentoo/config:  /etc/catalyst/kernels/###SUB_ARCH###-###REL_TYPE###-###BUILD_TARGET###-###TARGET_KERNEL###.config
-boot/kernel/gentoo/extraversion: ###BUILD_NAME###
-boot/kernel/gentoo/gk_kernargs: --all-ramdisk-modules --makeopts=-j###CPU_COUNT### --loglevel=###VERBOSITY###
