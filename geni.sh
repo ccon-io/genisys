@@ -23,6 +23,7 @@ declare -i NO_MULTILIB='0'
 declare -i SELINUX='0'
 declare -i AWS_SUPPORT='0'
 declare -i OPENSTACK_SUPPORT='0'
+declare -i TAKE_SNAPSHOT='1'
 
 declare -r COLOUR_RED='\033[0;31m'
 declare -r COLOUR_GREEN='\033[0;32m'
@@ -36,6 +37,7 @@ declare TARGET_KERNEL=""
 declare BUILD_NAME=""
 declare BASE_PROFILE=""
 declare BUILD_TARGET_STAGE=""
+declare PORTAGE_SNAPSHOT=""
 
 CATALYST_USERS=""
 
@@ -64,7 +66,7 @@ die () {
 
 usage () {
   log 0 "Usage:"
-  echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage)\n\t\t-A { amd64 | x32 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | vanilla } \t\t-- Base profile for this build\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch"
+  echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage or 'all' for either)\n\t\t-A { amd64 | x32 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | vanilla } \t\t-- Base profile for this build\n\t\t-R { snapshot } \t\t\t-- ID of Portage snapshot to use (latest if omitted)\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch (latest if omitted)"
   echo -e "\n\tOptional args:\t-a [aws support] -k [enable kerncache] -n [no-multilib] -o [openstack support] -s [selinux support]"
   echo -e "\t\t\t-c [clear ccache] -d [debug] -p [purge] -q [quiet] -r [clear autoresume] -v [increment verbosity]"
   echo
@@ -390,20 +392,21 @@ runCatalyst () {
     snapshot)
       local CATALYST_ARGS="${CATALYST_ARGS} -s"
       log '0' "Taking portage snapshot with args: ${CATALYST_ARGS}"
+
       if (( QUIET_OUTPUT == 1 ))
       then
         local SCRIPT_SCOPE='2'
         log '3' "Running silently... "
-        ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} latest" ${SCRIPT_OUT}  2> ${SCRIPT_ERR} &> /dev/null ) &
+        ( script ${SCRIPT_FLAGS} "${CATALYST} ${CATALYST_ARGS} ${DATE_SUFFIX}" ${SCRIPT_OUT}  2> ${SCRIPT_ERR} &> /dev/null ) &
         jobWait $!
         retVal=$?
         if (( retVal > 0 ))
         then
           [[ $- =~ "i" ]] && cat ${SCRIPT_OUT}
-          log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
+          log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID} for details"
         fi
       else
-        ${CATALYST} ${CATALYST_ARGS} latest
+        ${CATALYST} ${CATALYST_ARGS} ${DATE_SUFFIX}
         retVal=$?
       fi
       (( retVal == 0 )) || return "${retVal}"
@@ -421,7 +424,7 @@ runCatalyst () {
         if (( retVal > 0 ))
         then
           [[ $- =~ "i" ]] && cat ${SCRIPT_OUT}
-          log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${RUN_ID} for details"
+          log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID} for details"
         fi
       else
         ${CATALYST} ${CATALYST_ARGS} ${CATALYST_BUILD_DIR}/${SPEC_FILE}
@@ -523,21 +526,25 @@ prepCatalystStage () {
   fi
 }
 
-prepCatalystStage1 () {
+prepPortage () {
   local SCRIPT_SCOPE='1'
-  log '0' "Starting Catalyst run..."
-  if (( BUILD_TARGET_STAGE == 1 ))
+  (( VERBOSITY > 0 )) && log '0' "Validating portage cache"
+  if [[ -f ${CATALYST_SNAPSHOT_DIR}/portage-${PORTAGE_SNAPSHOT}.tar.bz2 ]]
   then
-    if (( PORTAGE_SNAPSHOT_AGE > PORTAGE_SNAPSHOT_AGE_MAX ))
-    then 
-      runCatalyst 'snapshot' || die "Catalyst failed to make a snapshot of portage" "1"
-    fi
+    PORTAGE_SNAPSHOT_DATE=$(date +%s -r ${CATALYST_SNAPSHOT_DIR}/portage-${PORTAGE_SNAPSHOT}.tar.bz2)
+    PORTAGE_SNAPSHOT_AGE=$(( TIME_NOW - PORTAGE_SNAPSHOT_DATE ))
+    PORTAGE_SNAPSHOT_AGE_MAX='14400'
+    (( PORTAGE_SNAPSHOT_AGE > PORTAGE_SNAPSHOT_AGE_MAX )) || return
   fi
+
+  runCatalyst 'snapshot' || die "Catalyst failed to make a snapshot of portage" "1"
 }
 
 prepCatalyst () {
   (( $UID > 0 )) && die "Must run with root" '2'
   echo $$ > ${PID_FILE}
+  DATE_SUFFIX=$(date "+%Y%m%d")
+  SPEC_FILE_PREFIX="stage${BUILD_TARGET_STAGE}"
 
   CATALYST_BUILD_DIR="${CATALYST_BUILD_DIR_BASE}/${BUILD_NAME}/${BUILD_TARGET}"
   declare -a CATALYST_DIRS=( "${CATALYST_BASE_DIR}" "${CATALYST_BUILD_DIR_BASE}" "${CATALYST_TMP_DIR}" "${CATALYST_SNAPSHOT_DIR}" "${CATALYST_LOG_DIR}" "${CATALYST_LOG_DIR}/failed/stale" "${CATALYST_TMP_DIR}/${BUILD_NAME}" "${CATALYST_BUILD_DIR}" "${CATALYST_LOG_DIR}/archive" )
@@ -553,10 +560,6 @@ prepCatalyst () {
   mount|grep "${CATALYST_TMP_DIR}" &> /dev/null
   (( $? == 0 )) && die "Looks like stuff is still mounted in the chroot. This makes pain. Check: mount | grep ${CATALYST_TMP_DIR}" '1'
 
-  PORTAGE_SNAPSHOT_DATE=$(date +%s -r ${CATALYST_SNAPSHOT_DIR}/portage-latest.tar.bz2)
-  PORTAGE_SNAPSHOT_AGE=$(( TIME_NOW - PORTAGE_SNAPSHOT_DATE ))
-  PORTAGE_SNAPSHOT_AGE_MAX='14400'
-
   if [[ ${BASE_PROFILE} == 'hardened' ]] 
   then
     BASE_PROFILE_PATH="${BASE_PROFILE}/linux/${BUILD_ARCH}"
@@ -565,11 +568,35 @@ prepCatalyst () {
     BASE_PROFILE_PATH="default/linux/${BUILD_ARCH}/13.0"
   fi
 
-  (( NO_MULTILIB == 1 )) &&  BASE_PROFILE_PATH="${BASE_PROFILE_PATH}/no-multilib"
-  (( SELINUX == 1 )) &&  BASE_PROFILE_PATH="${BASE_PROFILE_PATH}/selinux"
+  if (( NO_MULTILIB == 1 ))
+  then
+    BASE_PROFILE_PATH="${BASE_PROFILE_PATH}/no-multilib"
+    SPEC_FILE_PREFIX="${SPEC_FILE_PREFIX}-nomultilib"
+  fi
 
-  #todo: make this conditional
-  PORTAGE_SNAPSHOT='latest'
+  if (( SELINUX == 1 )) 
+  then 
+    BASE_PROFILE_PATH="${BASE_PROFILE_PATH}/selinux"
+    SPEC_FILE_PREFIX="${SPEC_FILE_PREFIX}-selinux"
+  fi
+
+  if (( BUILD_TARGET_STAGE == 4 ))
+  then
+    if (( AWS_SUPPORT == 1 ))
+    then
+      SPEC_FILE_PREFIX="${SPEC_FILE_PREFIX}-aws"
+    elif (( OPENSTACK_SUPPORT == 1 ))
+    then
+      SPEC_FILE_PREFIX="${SPEC_FILE_PREFIX}-ostack"
+    fi
+  fi
+
+  SPEC_FILE="${SPEC_FILE_PREFIX}.spec"
+
+  if [[ -z ${PORTAGE_SNAPSHOT} ]]
+  then
+    PORTAGE_SNAPSHOT=${DATE_SUFFIX}
+  fi
 
   DIST_BASE_URL='http://distfiles.gentoo.org/releases'
   STAGE3_URL_BASE="${BUILD_ARCH}/autobuilds"
@@ -600,6 +627,8 @@ prepCatalyst () {
 
   STAGE3_URL_BASE="${STAGE3_URL_BASE}/${BUILD_VERSION}"
 
+  VERSION_STAMP_PREFIX=""
+
   if [[ ${BASE_PROFILE} == 'hardened' ]] 
   then
     STAGE3_URL_BASE="${STAGE3_URL_BASE}/hardened"
@@ -617,17 +646,11 @@ prepCatalyst () {
   SEED_STAGE_ASC="${SEED_STAGE_DIGESTS}.asc"
   SEED_STAGE_CONTENTS="${SEED_STAGE}.CONTENTS"
 
-  VERSION_STAMP="${VERSION_STAMP_PREFIX}-${DIST_STAGE3_LATEST}"
-
-  SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec"
-  if (( AWS_SUPPORT == 1 && BUILD_TARGET_STAGE == 4 ))
+  if [[ -z ${VERSION_STAMP_PREFIX} ]]
   then
-    SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec.aws"
-  fi
-
-  if (( OPENSTACK_SUPPORT == 1 && BUILD_TARGET_STAGE == 4 ))
-  then
-    SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec.ostack"
+    VERSION_STAMP="${DIST_STAGE3_LATEST}"
+  else
+    VERSION_STAMP="${VERSION_STAMP_PREFIX}-${DIST_STAGE3_LATEST}"
   fi
 
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
@@ -690,7 +713,7 @@ prepCatalyst () {
     (( $? == 0 )) || die "Could not manipulate spec file: post" '1'
   fi
 
-  (( BUILD_TARGET_STAGE == 1 )) && prepCatalystStage1
+  (( BUILD_TARGET_STAGE == 1 )) && (( TAKE_SNAPSHOT == 1 )) && prepPortage
 
   if (( CLEAR_CCACHE == 1 ))
   then
@@ -728,7 +751,7 @@ menuSelect () {
 
   (( ${#@} < 1 )) && die "No arguments supplied" '2'
 
-  while getopts ":A:K:N:P:S:T:V:acdknopqrsv" opt
+  while getopts ":A:K:N:P:R:S:T:V:acdknopqrsv" opt
   do
     case ${opt} in
       A)
@@ -742,6 +765,11 @@ menuSelect () {
       ;;
       P)
         BASE_PROFILE="${OPTARG}"
+      ;;
+      R)
+       PORTAGE_SNAPSHOT="${OPTARG}" 
+       TAKE_SNAPSHOT='0'
+       [[ ${PORTAGE_SNAPSHOT} =~ ^[0-9]+$ ]] || die "Invalid format: ${PORTAGE_SNAPSHOT} should look something like: ${DATE_SUFFIX}" '2'
       ;;
       S)
         [[ -z ${BUILD_TARGET_STAGE} ]] && BUILD_TARGET_STAGE="${OPTARG}"
@@ -829,7 +857,7 @@ menuSelect () {
   (( OPENSTACK_SUPPORT == 1 && AWS_SUPPORT == 1 )) && die "Only one of -a or -o can be set" '2'
 
   [[ ${BASE_PROFILE} == 'hardened' || ${BASE_PROFILE} == 'vanilla' ]] || die "Unknown profile: ${BASE_PROFILE}" '2'
-  [[ ${BASE_PROFILE} == 'vanilla' ]] && (( SELINUX_SUPPORT == 1 )) && die "Selinux not supported on profile: ${BASE_PROFILE}" '2'
+  [[ ${BASE_PROFILE} == 'vanilla' ]] && (( SELINUX == 1 )) && die "Selinux not supported on profile: ${BASE_PROFILE}" '2'
   
   if [[ ${BUILD_TARGET}='stage' || ${BUILD_TARGET}='livecd' ]]
   then
