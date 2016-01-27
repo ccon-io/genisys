@@ -10,6 +10,7 @@ declare -r SHA512SUM='/usr/bin/sha512sum'
 declare -r OPENSSL='/usr/bin/openssl'
 declare -r CATALYST='/usr/bin/catalyst'
 declare -r LOGGER='/usr/bin/logger'
+declare -r DOCKER='/usr/bin/docker'
 declare -r EC2_BUNDLE_IMAGE='/usr/bin/ec2-bundle-image'
 
 declare -ri CPU_COUNT=$(nproc)
@@ -67,8 +68,9 @@ die () {
 usage () {
   log 0 "Usage:"
   echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage or 'all' for either)\n\t\t-A { amd64 | x32 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | vanilla } \t\t-- Base profile for this build\n\t\t-R { snapshot } \t\t\t-- ID of Portage snapshot to use (latest if omitted)\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch (latest if omitted)"
-  echo -e "\n\tOptional args:\t-a [aws support] -k [enable kerncache] -n [no-multilib] -o [openstack support] -s [selinux support]"
-  echo -e "\t\t\t-c [clear ccache] -d [debug] -p [purge] -q [quiet] -r [clear autoresume] -v [increment verbosity]"
+  echo -e "\n\tOptional args:\t-a [aws support]\t-d [docker support]\t-k [enable kerncache]\t-o [openstack support]\t-s [selinux support]"
+  echo -e "\t\t\t-c [clear ccache]\t-n [no-multilib]\t-p [purge last build]\t-q [quiet output]\t-r [clear autoresume]"
+  echo -e "\t\t\t-x [debug output]\t-v [increment verbosity]"
   echo
 }
 
@@ -654,6 +656,9 @@ prepCatalyst () {
   SEED_STAGE_ASC="${SEED_STAGE_DIGESTS}.asc"
   SEED_STAGE_CONTENTS="${SEED_STAGE}.CONTENTS"
 
+  CURRENT_STAGE_BZ2=${SEED_STAGE/stage[1-4]/stage${BUILD_TARGET_STAGE}
+  CURRENT_STAGE=$( basename ${CURRENT_STAGE_BZ2} .tar.bz2)
+
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
   [[ ${BUILD_TARGET} == stage ]] && prepCatalystStage
   
@@ -719,7 +724,6 @@ prepCatalyst () {
   if (( CLEAR_CCACHE == 1 ))
   then
     local SCRIPT_SCOPE='3'
-    CURRENT_STAGE=$( basename ${SEED_STAGE/stage[1-4]/stage${BUILD_TARGET_STAGE}} .tar.bz2)
     log '0' "Clearing CCache: ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/${CURRENT_STAGE}/var/ccache/"
     rm -rf ${CATALYST_TMP_DIR}/${BUILD_NAME}/${BUILD_TARGET}/${CURRENT_STAGE}/var/ccache/* || die "Failed to clear CCache" '1'
     (( $? > 0 )) &&  log '2' "Failed to clear ccache"
@@ -744,6 +748,10 @@ burnIso () {
   echo "Burn"
 }
 
+dockStage () {
+  bzcat ${CURRENT_STAGE_BZ2} | ${DOCKER} import - "${BUILD_NAME}" || die "Failed to dockerize: ${CURRENT_STAGE_BZ2}" '1'
+}
+
 menuSelect () {
   TIME_NOW=$(date +%s)
   START_TIME=${TIME_NOW}
@@ -752,7 +760,7 @@ menuSelect () {
 
   (( ${#@} < 1 )) && die "No arguments supplied" '2'
 
-  while getopts ":A:K:N:P:R:S:T:V:acdknopqrsv" opt
+  while getopts ":A:K:N:P:R:S:T:V:acdknopqrsvx" opt
   do
     case ${opt} in
       A)
@@ -810,8 +818,7 @@ menuSelect () {
         CLEAR_CCACHE='1'
       ;;
       d)
-        DEBUG='1'
-        [[ ! ${CATALYST_ARGS} =~ "-d" ]] && CATALYST_ARGS="${CATALYST_ARGS} -d"
+        DOCKER_SUPPORT='1'
       ;;
       k)
         CATALYST_CONFIG="${CATALYST_CONFIG_KERNCACHE}"
@@ -839,6 +846,10 @@ menuSelect () {
       v)
         (( VERBOSITY < 5 )) && (( ++VERBOSITY ))
         (( VERBOSITY == 1 )) && CATALYST_ARGS="${CATALYST_ARGS} -v"
+      ;;
+      x)
+        DEBUG='1'
+        [[ ! ${CATALYST_ARGS} =~ "-d" ]] && CATALYST_ARGS="${CATALYST_ARGS} -d"
       ;;
       \?)
         die "Unknown option: -$OPTARG" '1'
@@ -904,6 +915,7 @@ main() {
   then
     burnIso || return 1
   fi
+  (( DOCKER_SUPPORT == 1 )) && dockStage
 }
 
 trap "echo && die 'SIGINT Caught' 1" SIGINT 
