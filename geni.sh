@@ -375,8 +375,8 @@ jobWait() {
 }
 
 awsBundleImage () {
-  verifyObject 'dir' "/${IMAGE_STORE}/ami/${REL_NAME}/${BUILD_VER}/"
-  ${EC2_BUNDLE_IMAGE} -k ${CATALYST_CONFIG_DIR}/keys/key.pem -c /etc/ec2/amitools/cert-ec2.pem  -u ${AWS_ACCOUNT_ID} -i ${CATALYST_BASE_DIR}/iso/${REL_NAME}-${BUILD_ARCH}-${BASE_PROFILE}-installer-${BUILD_VER}.iso -d ${IMAGE_STORE}/ami/${REL_NAME}/${BUILD_VER}/ -r x86_64
+  verifyObject 'dir' "/${IMAGE_STORE}/ami/${BUILD_NAME}/${BUILD_VER}/"
+  ${EC2_BUNDLE_IMAGE} -k ${CATALYST_CONFIG_DIR}/keys/key.pem -c /etc/ec2/amitools/cert-ec2.pem  -u ${AWS_ACCOUNT_ID} -i ${CATALYST_BASE_DIR}/iso/${BUILD_NAME}-${BUILD_ARCH}-${BASE_PROFILE}-installer-${BUILD_VER}.iso -d ${IMAGE_STORE}/ami/${BUILD_NAME}/${BUILD_VER}/ -r x86_64
 }
 
 runCatalyst () {
@@ -476,7 +476,7 @@ verifyCatalystDeps () {
     then
       if (( BUILD_TARGET_STAGE == '1' ))
       then
-        fetchRemote 'parallel' "${REL_BASE_URL}/${STAGE3_URL_BASE}/${file}" "${WORK_DIR}"
+        fetchRemote 'parallel' "${DIST_BASE_URL}/${STAGE3_URL_BASE}/${file}" "${WORK_DIR}"
         (( $? == 0 )) || die "Failed to fetch: ${file}" "1"
       else
         die "Cant find: $file" '1'
@@ -557,14 +557,21 @@ prepCatalyst () {
   PORTAGE_SNAPSHOT_AGE=$(( TIME_NOW - PORTAGE_SNAPSHOT_DATE ))
   PORTAGE_SNAPSHOT_AGE_MAX='14400'
 
-  REL_PROFILE="${BASE_PROFILE}/linux/${BUILD_ARCH}"
-  (( NO_MULTILIB == 1 )) &&  REL_PROFILE="${REL_PROFILE}/no-multilib"
-  (( SELINUX == 1 )) &&  REL_PROFILE="${REL_PROFILE}/selinux"
+  if [[ ${BASE_PROFILE} == 'hardened' ]] 
+  then
+    BASE_PROFILE_PATH="${BASE_PROFILE}/linux/${BUILD_ARCH}"
+  elif [[ ${BASE_PROFILE} == 'vanilla' ]]
+  then
+    BASE_PROFILE_PATH="default/linux/${BUILD_ARCH}/13.0"
+  fi
+
+  (( NO_MULTILIB == 1 )) &&  BASE_PROFILE_PATH="${BASE_PROFILE_PATH}/no-multilib"
+  (( SELINUX == 1 )) &&  BASE_PROFILE_PATH="${BASE_PROFILE_PATH}/selinux"
 
   #todo: make this conditional
-  REL_SNAPSHOT='latest'
+  PORTAGE_SNAPSHOT='latest'
 
-  REL_BASE_URL='http://distfiles.gentoo.org/releases'
+  DIST_BASE_URL='http://distfiles.gentoo.org/releases'
   STAGE3_URL_BASE="${BUILD_ARCH}/autobuilds"
   STAGE3_MANIFEST="latest-stage3-${BUILD_ARCH}"
 
@@ -587,7 +594,7 @@ prepCatalyst () {
     SRC_PATH_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}"
   fi
 
-  DIST_STAGE3_LATEST="$(fetchRemote 'print' ${REL_BASE_URL}/${BUILD_ARCH}/autobuilds/${STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
+  DIST_STAGE3_LATEST="$(fetchRemote 'print' ${DIST_BASE_URL}/${BUILD_ARCH}/autobuilds/${STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
 
   [[ -z ${BUILD_VERSION} ]] && BUILD_VERSION="${DIST_STAGE3_LATEST}"
 
@@ -597,7 +604,10 @@ prepCatalyst () {
   then
     STAGE3_URL_BASE="${STAGE3_URL_BASE}/hardened"
     SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}-${BASE_PROFILE}"
+    VERSION_STAMP_PREFIX="${BASE_PROFILE}"
+    (( SELINUX == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}-selinux"
     (( NO_MULTILIB == 1 )) && SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}+nomultilib"
+    (( NO_MULTILIB == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}+nomultilib"
   else
     (( NO_MULTILIB == 1 )) && SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}-nomultilib"
   fi
@@ -607,9 +617,6 @@ prepCatalyst () {
   SEED_STAGE_ASC="${SEED_STAGE_DIGESTS}.asc"
   SEED_STAGE_CONTENTS="${SEED_STAGE}.CONTENTS"
 
-  VERSION_STAMP_PREFIX="${BASE_PROFILE}"
-  (( SELINUX == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}-selinux"
-  (( NO_MULTILIB == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}+nomultilib"
   VERSION_STAMP="${VERSION_STAMP_PREFIX}-${DIST_STAGE3_LATEST}"
 
   SPEC_FILE="stage${BUILD_TARGET_STAGE}.spec"
@@ -667,7 +674,7 @@ prepCatalyst () {
 
   SRC_PATH="${BUILD_NAME}/${BUILD_TARGET}/${SRC_PATH_PREFIX}-${DIST_STAGE3_LATEST}"
 
-  mangleTemplate 'overwrite' "${SPEC_FILE}.header.template" "BUILD_ARCH VERSION_STAMP BASE_PROFILE REL_PROFILE REL_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET"
+  mangleTemplate 'overwrite' "${SPEC_FILE}.header.template" "BUILD_ARCH VERSION_STAMP BASE_PROFILE BASE_PROFILE_PATH PORTAGE_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET"
   (( $? == 0 )) || die "Could not manipulate spec file: header" '1'
 
   if ( (( ${BUILD_TARGET_STAGE} == 1 )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == 4 )) && [[ ${BUILD_TARGET} == 'stage' ]] )
@@ -822,6 +829,7 @@ menuSelect () {
   (( OPENSTACK_SUPPORT == 1 && AWS_SUPPORT == 1 )) && die "Only one of -a or -o can be set" '2'
 
   [[ ${BASE_PROFILE} == 'hardened' || ${BASE_PROFILE} == 'vanilla' ]] || die "Unknown profile: ${BASE_PROFILE}" '2'
+  [[ ${BASE_PROFILE} == 'vanilla' ]] && (( SELINUX_SUPPORT == 1 )) && die "Selinux not supported on profile: ${BASE_PROFILE}" '2'
   
   if [[ ${BUILD_TARGET}='stage' || ${BUILD_TARGET}='livecd' ]]
   then
