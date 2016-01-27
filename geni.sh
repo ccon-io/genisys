@@ -224,32 +224,15 @@ bundleLogs () {
 
 verifyTemplates () {
   local SCRIPT_SCOPE='1'
-  case ${BUILD_TARGET_STAGE} in
-    1)
-      TEMPLATES=( ${STAGE1_TEMPLATES[@]} )
-    ;;
-    2)
-      TEMPLATES=( ${STAGE2_TEMPLATES[@]} )
-    ;;
-    3)
-      TEMPLATES=( ${STAGE3_TEMPLATES[@]} )
-    ;;
-    4)
-      TEMPLATES=( ${STAGE4_TEMPLATES[@]} )
-    ;;
-  esac
 
   log '0' "Checking for templates"
-  for template in ${TEMPLATES[@]}
-  do 
-    local SCRIPT_SCOPE='2'
-    (( VERBOSITY > 0 )) && log '0' "Checking: ${template}"
-    if [[ ! -f ${CATALYST_TEMPLATE_DIR}/${template} ]]
-    then
-        log '2' "Missing template: ${template}" 
-        exit 1
-    fi
-  done
+  local SCRIPT_SCOPE='2'
+  (( VERBOSITY > 0 )) && log '0' "Checking: ${SPEC_FILE}"
+  if [[ ! -f ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE} ]]
+  then
+      log '2' "Missing template: ${SPEC_FILE}" 
+      exit 1
+  fi
 }
 
 mangleTemplate () {
@@ -443,14 +426,7 @@ runCatalyst () {
 prepCatalystLiveCD () {
   SPEC_FILE="livecd-${SPEC_FILE}"
 
-  STAGE1_TEMPLATES=( "${SPEC_FILE}.header.template" "${SPEC_FILE}.pkg.template" "${SPEC_FILE}.use.template" )
-  STAGE2_TEMPLATES=( "${SPEC_FILE}.header.template" "${SPEC_FILE}.boot.template" "${SPEC_FILE}.post.template" )
-
-  if (( ${BUILD_TARGET_STAGE} == '1' ))
-  then
-    cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.pkg.template > ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep
-    cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.use.template >> ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep
-  elif (( ${BUILD_TARGET_STAGE} == '2' ))
+  if (( ${BUILD_TARGET_STAGE} == '2' ))
   then
     SRC_PATH_PREFIX="livecd-${SRC_PATH_PREFIX}"
   fi
@@ -512,19 +488,6 @@ verifyCatalystDeps () {
     [[ -f ${CATALYST_BUILD_DIR}/${SEED_STAGE} ]] && return 0
     (( VERBOSITY > 0 )) && log '0' "Copying seed stage to build dir"
     cp ${WORK_DIR}/${SEED_STAGE} ${CATALYST_BUILD_DIR}/
-  fi
-}
-
-prepCatalystStage () {
-  STAGE1_TEMPLATES=( "${SPEC_FILE}.header.template" )
-  STAGE2_TEMPLATES=( "${SPEC_FILE}.header.template" )
-  STAGE3_TEMPLATES=( "${SPEC_FILE}.header.template" )
-  STAGE4_TEMPLATES=( "${SPEC_FILE}.header.template" "${SPEC_FILE}.pkg.template" "${SPEC_FILE}.use.template" )
-
-  if (( BUILD_TARGET_STAGE == 4 ))
-  then
-    cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.pkg.template > ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep
-    cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.use.template >> ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep
   fi
 }
 
@@ -619,7 +582,7 @@ prepCatalyst () {
     SEED_STAGE_PREFIX="stage3-${BUILD_ARCH}"
     SRC_PATH_PREFIX="stage3-${BUILD_ARCH}"
   else
-    SEED_STAGE_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}"
+    SEED_STAGE_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}-${BASE_PROFILE}"
     SRC_PATH_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}"
   fi
 
@@ -634,7 +597,6 @@ prepCatalyst () {
   if [[ ${BASE_PROFILE} == 'hardened' ]] 
   then
     STAGE3_URL_BASE="${STAGE3_URL_BASE}/hardened"
-    SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}-${BASE_PROFILE}"
     (( SELINUX == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}-selinux"
     if (( NO_MULTILIB == 1 ))
     then
@@ -656,11 +618,10 @@ prepCatalyst () {
   SEED_STAGE_ASC="${SEED_STAGE_DIGESTS}.asc"
   SEED_STAGE_CONTENTS="${SEED_STAGE}.CONTENTS"
 
-  CURRENT_STAGE_BZ2=${SEED_STAGE/stage[1-4]/stage${BUILD_TARGET_STAGE}
+  CURRENT_STAGE_BZ2=${SEED_STAGE/stage[1-4]/stage${BUILD_TARGET_STAGE}}
   CURRENT_STAGE=$( basename ${CURRENT_STAGE_BZ2} .tar.bz2)
 
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
-  [[ ${BUILD_TARGET} == stage ]] && prepCatalystStage
   
   log 0 "Checking dependencies"
   verifyCatalystDeps || die "Failed to verify Seed Stage." '1'
@@ -703,20 +664,13 @@ prepCatalyst () {
 
   SRC_PATH="${BUILD_NAME}/${BUILD_TARGET}/${SRC_PATH_PREFIX}-${DIST_STAGE3_LATEST}"
 
-  mangleTemplate 'overwrite' "${SPEC_FILE}.header.template" "BUILD_ARCH VERSION_STAMP BASE_PROFILE BASE_PROFILE_PATH PORTAGE_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET"
-  (( $? == 0 )) || die "Could not manipulate spec file: header" '1'
-
-  if ( (( ${BUILD_TARGET_STAGE} == 1 )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == 4 )) && [[ ${BUILD_TARGET} == 'stage' ]] )
-  then
-    cat ${CATALYST_TMP_DIR}/${BUILD_NAME}/${SPEC_FILE}.prep >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
-  fi
-
   if ( (( ${BUILD_TARGET_STAGE} == 2 )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == 4 )) && [[ ${BUILD_TARGET} == 'stage' ]] )
   then
-    mangleTemplate 'append' "${SPEC_FILE}.boot.template" "BASE_PROFILE BUILD_ARCH BUILD_TARGET TARGET_KERNEL"
-    (( $? == 0 )) || die "Could not manipulate spec file: boot" '1'
-    cat ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE}.post.template >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
-    (( $? == 0 )) || die "Could not manipulate spec file: post" '1'
+    mangleTemplate 'overwrite' "${SPEC_FILE}" "BUILD_ARCH VERSION_STAMP BASE_PROFILE BASE_PROFILE_PATH PORTAGE_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET BASE_PROFILE BUILD_ARCH BUILD_TARGET TARGET_KERNEL"
+    (( $? == 0 )) || die "Could not manipulate spec file: ${SPEC_FILE}" '1'
+  else
+    mangleTemplate 'overwrite' "${SPEC_FILE}" "BUILD_ARCH VERSION_STAMP BASE_PROFILE BASE_PROFILE_PATH PORTAGE_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET"
+    (( $? == 0 )) || die "Could not manipulate spec file: ${SPEC_FILE}" '1'
   fi
 
   (( BUILD_TARGET_STAGE == 1 )) && (( TAKE_SNAPSHOT == 1 )) && prepPortage
