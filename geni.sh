@@ -26,7 +26,7 @@ declare -i DOCKER_SUPPORT='0'
 declare -i AWS_SUPPORT='0'
 declare -i OPENSTACK_SUPPORT='0'
 declare -i TAKE_SNAPSHOT='1'
-declare -i CLOAK_OUTPUT='1'
+declare -i CLOAK_OUTPUT='0'
 
 declare -r COLOUR_RED='\033[0;31m'
 declare -r COLOUR_GREEN='\033[0;32m'
