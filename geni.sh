@@ -73,7 +73,7 @@ usage () {
   echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage or 'all' for either)\n\t\t-A { amd64 | x86 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | vanilla } \t\t-- Base profile for this build\n\t\t-R { snapshot } \t\t\t-- ID of Portage snapshot to use (latest if omitted)\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch (latest if omitted)"
   echo -e "\n\tOptional args:\t-a [aws support]\t-d [docker support]\t-k [enable kerncache]\t-o [openstack support]\t-s [selinux support]"
   echo -e "\t\t\t-c [clear ccache]\t-n [no-multilib]\t-p [purge last build]\t-q [quiet output]\t-r [clear autoresume]"
-  echo -e "\t\t\t-x [debug output]\t-v [increase verbosity]\t-- [silent output]"
+  echo -e "\t\t\t-x [debug output]\t-v [increase verbosity]\t-b [batch mode]"
   echo
 }
 
@@ -205,7 +205,7 @@ bundleLogs () {
   [[ ${CATALYST_LOG_DIR} == / || -z ${CATALYST_LOG_DIR} ]] && die "Broken LOG_DIR" '1'
   find ${CATALYST_LOG_DIR} -type f -empty -exec rm {} \; &> /dev/null
   find ${CATALYST_LOG_DIR} -type d -empty -exec rm -rf {} \; &> /dev/null
-
+*
   log 0 "Collecting logs"
   for mask in ${CATALYST_LOG_MASKS[@]}
   do
@@ -218,7 +218,7 @@ bundleLogs () {
       tmp_dir=$(mktemp -d)
       log 0 "Compressing logs"
       mv ${CATALYST_LOGS[@]} ${tmp_dir}/
-      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz -C ${tmp_dir} * &> /dev/null
+      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz -C ${tmp_dir} ${tmp_dir}/  &> /dev/null
       (( $? == 0 )) && rm -rf ${tmp_dir}
     ;;
     2)
@@ -726,7 +726,7 @@ menuSelect () {
 
   (( ${#@} < 1 )) && die "No arguments supplied" '2'
 
-  while getopts ":A:K:N:P:R:S:T:V:acdknopqrsvx-" opt
+  while getopts ":A:K:N:P:R:S:T:V:abcdknopqrsvx" opt
   do
     case ${opt} in
       A)
@@ -780,6 +780,9 @@ menuSelect () {
       a)
         AWS_SUPPORT='1'
       ;;
+      b)
+        CLOAK_OUTPUT='1'
+      ;;
       c)
         CLEAR_CCACHE='1'
       ;;
@@ -817,9 +820,6 @@ menuSelect () {
       x)
         DEBUG='1'
         [[ ! ${CATALYST_ARGS} =~ "-d" ]] && CATALYST_ARGS="${CATALYST_ARGS} -d"
-      ;;
-      -)
-        CLOAK_OUTPUT='1'
       ;;
       \?)
         die "Unknown option: -$OPTARG" '1'
