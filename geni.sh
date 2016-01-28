@@ -218,8 +218,11 @@ bundleLogs () {
       tmp_dir=$(mktemp -d)
       log 0 "Compressing logs"
       mv ${CATALYST_LOGS[@]} ${tmp_dir}/
-      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz -C ${tmp_dir} ${tmp_dir}/  &> /dev/null
-      (( $? == 0 )) && rm -rf ${tmp_dir}
+      [[ -d ${tmp_dir} ]] || return 1
+      cd ${tmp_dir}/
+      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz .  &> /dev/null
+      (( $? == 0 )) && cd - && rm -rf ${tmp_dir}
+      cd -
     ;;
     2)
       log 0 "Moving logs to: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}"
