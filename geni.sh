@@ -715,6 +715,7 @@ burnIso () {
 }
 
 dockStage () {
+  log '0' "Dockerizing ${CATALYST_BUILD_DIR}/${CURRENT_STAGE_BZ2}"
   bzcat ${CATALYST_BUILD_DIR}/${CURRENT_STAGE_BZ2} | ${DOCKER} import - "${BUILD_NAME}" || die "Failed to dockerize: ${CURRENT_STAGE_BZ2}" '1'
 }
 
