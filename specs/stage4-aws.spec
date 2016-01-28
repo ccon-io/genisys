@@ -4,9 +4,9 @@ version_stamp: ###VERSION_STAMP###
 rel_type: ###BUILD_NAME###/###BUILD_TARGET###
 profile: ###BASE_PROFILE_PATH###
 snapshot: ###PORTAGE_SNAPSHOT### 
-source_subpath: ###SRC_PATH### 
-portage_confdir: /etc/catalyst/overlays/portage
-kerncache_path: /var/data/catalyst/kerncache/###BUILD_NAME###
+source_subpath: ######BUILD_SRC_PATH###### 
+portage_confdir: ###CATALYST_OVERLAY_DIR###/portage
+kerncache_path: ###CATALYST_BASE_DIR###/kerncache/###BUILD_NAME###
 
 stage4/packages:
   app-admin/logrotate
@@ -95,7 +95,7 @@ boot/kernel/gentoo/gk_kernargs: --all-ramdisk-modules
 
 stage4/users: ###CATALYST_USERS###
 #stage4/fsscript: /release/releng/releases/weekly/scripts/cloud-prep.sh
-stage4/root_overlay: /etc/catalyst/overlays/root/
+stage4/root_overlay: ###CATALYST_OVERLAY_DIR###/root/
 stage4/rcadd:
 	acpid|default
 	cloud-config|default

@@ -26,6 +26,7 @@ declare -i DOCKER_SUPPORT='0'
 declare -i AWS_SUPPORT='0'
 declare -i OPENSTACK_SUPPORT='0'
 declare -i TAKE_SNAPSHOT='1'
+declare -i CLOAK_OUTPUT='1'
 
 declare -r COLOUR_RED='\033[0;31m'
 declare -r COLOUR_GREEN='\033[0;32m'
@@ -49,7 +50,8 @@ CATALYST_CONFIG_KERNCACHE="${CATALYST_CONFIG_DIR}/catalyst-kerncache.conf"
 
 CATALYST_BASE_DIR="$(grep ^storedir ${CATALYST_CONFIG}|cut -d\" -f2)"
 CATALYST_BUILD_DIR_BASE="${CATALYST_BASE_DIR}/builds"
-CATALYST_TEMPLATE_DIR=${CATALYST_CONFIG_DIR}/templates
+CATALYST_SPEC_DIR=${CATALYST_CONFIG_DIR}/specs
+CATALYST_OVERLAY_DIR=${CATALYST_CONFIG_DIR}/overlays
 CATALYST_TMP_DIR="${CATALYST_BASE_DIR}/tmp"
 CATALYST_LOG_DIR="$(grep ^port_logdir ${CATALYST_CONFIG}|cut -d\" -f2)"
 CATALYST_SNAPSHOT_DIR="$(grep ^snapshot_cache ${CATALYST_CONFIG}|cut -d\" -f2)"
@@ -71,7 +73,7 @@ usage () {
   echo -e "\n\t$(basename $0) \t-T { ami | iso | livecd | stage } \t-- Build an AMI for Amazon, bootable iso, livecd image or stage tarball\n\t\t-S { 1..4 } \t\t\t\t-- What stage (1-2 for livecd, 1-4 for regular stage or 'all' for either)\n\t\t-A { amd64 | x86 | ... } \t\t-- Architecture we are building on\n\t\t-K { kernel version } \t\t\t-- Version of kernel to build\n\t\t-N { BuildName }  \t\t\t-- Name / Unique Identifier of this build\n\t\t-P { hardened | vanilla } \t\t-- Base profile for this build\n\t\t-R { snapshot } \t\t\t-- ID of Portage snapshot to use (latest if omitted)\n\t\t-V { version } \t\t\t\t-- Version of stage snapshot to fetch (latest if omitted)"
   echo -e "\n\tOptional args:\t-a [aws support]\t-d [docker support]\t-k [enable kerncache]\t-o [openstack support]\t-s [selinux support]"
   echo -e "\t\t\t-c [clear ccache]\t-n [no-multilib]\t-p [purge last build]\t-q [quiet output]\t-r [clear autoresume]"
-  echo -e "\t\t\t-x [debug output]\t-v [increment verbosity]"
+  echo -e "\t\t\t-x [debug output]\t-v [increase verbosity]\t-- [silent output]"
   echo
 }
 
@@ -80,10 +82,12 @@ log () {
   local log_tag="$(basename ${0})[$$]"
   case $1 in
     0)
+      (( CLOAK_OUTPUT == 1 )) && return
       printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
     ;;
     1)
-      printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
+      (( CLOAK_OUTPUT == 0 )) && printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
+      (( CLOAK_OUTPUT == 1 )) && echo "${log_tag}: " "$2"
       ${LOGGER} -p daemon.info -t "${log_tag}" "$2"
     ;;
     2)
@@ -91,6 +95,7 @@ log () {
       ${LOGGER} -p daemon.err -t "${log_tag}" "$2"
     ;;
     3)
+      (( CLOAK_OUTPUT == 1 )) && return
       printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2"
     ;;
     4)
@@ -139,6 +144,7 @@ cleanUp () {
     checkPid $pid 
     (( PID_ALIVE == 0 )) && continue
     kill $pid &> /dev/null
+    sleep .6
     checkPid $pid
     (( PID_ALIVE == 0 )) && continue
     kill -9 $pid &> /dev/null
@@ -195,6 +201,8 @@ bundleLogs () {
   (( DEBUG == 1 )) && CATALYST_LOG_MASKS+=" *.dbg"
 
   log 0 "Clearing empty logs"
+
+  [[ ${CATALYST_LOG_DIR} == / || -z ${CATALYST_LOG_DIR} ]] && die "Broken LOG_DIR" '1'
   find ${CATALYST_LOG_DIR} -type f -empty -exec rm {} \; &> /dev/null
   find ${CATALYST_LOG_DIR} -type d -empty -exec rm -rf {} \; &> /dev/null
 
@@ -204,13 +212,14 @@ bundleLogs () {
     CATALYST_LOGS+=" $(find ${CATALYST_LOG_DIR} -type f -not -path "*/archive/*" -not -path "*/failed/*" -name ${mask})"
   done
   
-
   case $1 in
     1)
       CATALYST_LOGS+=" ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
+      tmp_dir=$(mktemp -d)
       log 0 "Compressing logs"
-      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz -C ${CATALYST_BASE_DIR} ${CATALYST_LOGS[@]} &> /dev/null
-      (( $? == 0 )) && rm -rf ${CATALYST_LOGS[@]}
+      mv ${CATALYST_LOGS[@]} ${tmp_dir}/
+      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz -C ${tmp_dir} * &> /dev/null
+      (( $? == 0 )) && rm -rf ${tmp_dir}
     ;;
     2)
       log 0 "Moving logs to: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}"
@@ -229,7 +238,7 @@ verifyTemplates () {
   log '0' "Checking for templates"
   local SCRIPT_SCOPE='2'
   (( VERBOSITY > 0 )) && log '0' "Checking: ${SPEC_FILE}"
-  if [[ ! -f ${CATALYST_TEMPLATE_DIR}/${SPEC_FILE} ]]
+  if [[ ! -f ${CATALYST_SPEC_DIR}/${SPEC_FILE} ]]
   then
       log '2' "Missing template: ${SPEC_FILE}" 
       exit 1
@@ -246,12 +255,12 @@ mangleTemplate () {
   
   if [[ "$1" == "overwrite" ]] 
   then
-    cp ${CATALYST_TEMPLATE_DIR}/${template} ${CATALYST_BUILD_DIR}/${SPEC_FILE}
+    cp ${CATALYST_SPEC_DIR}/${template} ${CATALYST_BUILD_DIR}/${SPEC_FILE}
     (( $? == 0 )) || return 1
   fi
   if [[ "$1" == "append" ]] 
   then
-    cat ${CATALYST_TEMPLATE_DIR}/${template} >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
+    cat ${CATALYST_SPEC_DIR}/${template} >> ${CATALYST_BUILD_DIR}/${SPEC_FILE}
     (( $? == 0 )) || return 1
   fi
 
@@ -348,7 +357,7 @@ jobWait() {
 
   while (( $? == 0 ))
   do
-    [[ $- =~ "i" ]] || break
+    (( CLOAK_OUTPUT == 0 )) || break
     local temp=${spinstr#?}
     printf " [%c]  " "$spinstr"
     local spinstr=$temp${spinstr%"$temp"}
@@ -357,7 +366,7 @@ jobWait() {
     checkPid $pid
     (( PID_ALIVE == 1 )) || break
   done
-  printf "    \b\b\b\b\n"
+  (( CLOAK_OUTPUT == 0 )) && printf "    \b\b\b\b\n"
   wait $pid
   return $?
 }
@@ -388,7 +397,7 @@ runCatalyst () {
         retVal=$?
         if (( retVal > 0 ))
         then
-          [[ $- =~ "i" ]] && cat ${SCRIPT_OUT}
+          (( CLOAK_OUTPUT == 0 )) && cat ${SCRIPT_OUT}
           log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID} for details"
         fi
       else
@@ -409,7 +418,7 @@ runCatalyst () {
         retVal=$?
         if (( retVal > 0 ))
         then
-          [[ $- =~ "i" ]] && cat ${SCRIPT_OUT}
+          (( CLOAK_OUTPUT == 0 )) && cat ${SCRIPT_OUT}
           log '2' "Errors reported, check: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID} for details"
         fi
       else
@@ -429,7 +438,7 @@ prepCatalystLiveCD () {
 
   if (( ${BUILD_TARGET_STAGE} == '2' ))
   then
-    SRC_PATH_PREFIX="livecd-${SRC_PATH_PREFIX}"
+    BUILD_SRC_PATH_PREFIX="livecd-${BUILD_SRC_PATH_PREFIX}"
   fi
 }
 
@@ -581,10 +590,12 @@ prepCatalyst () {
   if (( BUILD_TARGET_STAGE == 1 ))
   then
     SEED_STAGE_PREFIX="stage3-${BUILD_ARCH}"
-    SRC_PATH_PREFIX="stage3-${BUILD_ARCH}"
+    BUILD_SRC_PATH_PREFIX="stage3-${BUILD_ARCH}"
+    [[ ${BASE_PROFILE} == 'hardened' ]] && SEED_STAGE_PREFIX="${SEED_STAGE_PREFIX}-${BASE_PROFILE}"
+    [[ ${BASE_PROFILE} == 'hardened' ]] && BUILD_SRC_PATH_PREFIX="${BUILD_SRC_PATH_PREFIX}-${BASE_PROFILE}"
   else
     SEED_STAGE_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}-${BASE_PROFILE}"
-    SRC_PATH_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}-${BASE_PROFILE}"
+    BUILD_SRC_PATH_PREFIX="stage$(( BUILD_TARGET_STAGE - 1 ))-${BUILD_ARCH}-${BASE_PROFILE}"
   fi
 
   DIST_STAGE3_LATEST="$(fetchRemote 'print' ${DIST_BASE_URL}/${BUILD_ARCH}/autobuilds/${STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
@@ -597,7 +608,7 @@ prepCatalyst () {
 
   if [[ ${BASE_PROFILE} == 'hardened' ]] 
   then
-    STAGE3_URL_BASE="${STAGE3_URL_BASE}/hardened"
+      STAGE3_URL_BASE="${STAGE3_URL_BASE}/hardened"
     (( SELINUX == 1 )) && VERSION_STAMP_PREFIX="${VERSION_STAMP_PREFIX}-selinux"
     if (( NO_MULTILIB == 1 ))
     then
@@ -656,22 +667,23 @@ prepCatalyst () {
 
   if [[ ${BASE_PROFILE} == 'hardened' ]]
   then
-    (( SELINUX == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-selinux"
-    (( NO_MULTILIB == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}+nomultilib"
+    (( SELINUX == 1 )) && BUILD_SRC_PATH_PREFIX="${BUILD_SRC_PATH_PREFIX}-selinux"
+    (( NO_MULTILIB == 1 )) && BUILD_SRC_PATH_PREFIX="${BUILD_SRC_PATH_PREFIX}+nomultilib"
   else
-    (( NO_MULTILIB == 1 )) && SRC_PATH_PREFIX="${SRC_PATH_PREFIX}-nomultilib"
+    (( NO_MULTILIB == 1 )) && BUILD_SRC_PATH_PREFIX="${BUILD_SRC_PATH_PREFIX}-nomultilib"
   fi
 
-  SRC_PATH="${BUILD_NAME}/${BUILD_TARGET}/${SRC_PATH_PREFIX}-${DIST_STAGE3_LATEST}"
+  BUILD_SRC_PATH="${BUILD_NAME}/${BUILD_TARGET}/${BUILD_SRC_PATH_PREFIX}-${DIST_STAGE3_LATEST}"
 
-  if ( (( ${BUILD_TARGET_STAGE} == 2 )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == 4 )) && [[ ${BUILD_TARGET} == 'stage' ]] )
-  then
-    mangleTemplate 'overwrite' "${SPEC_FILE}" "BUILD_ARCH VERSION_STAMP BASE_PROFILE BASE_PROFILE_PATH PORTAGE_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET BASE_PROFILE BUILD_ARCH BUILD_TARGET TARGET_KERNEL"
-    (( $? == 0 )) || die "Could not manipulate spec file: ${SPEC_FILE}" '1'
-  else
-    mangleTemplate 'overwrite' "${SPEC_FILE}" "BUILD_ARCH VERSION_STAMP BASE_PROFILE BASE_PROFILE_PATH PORTAGE_SNAPSHOT SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET"
-    (( $? == 0 )) || die "Could not manipulate spec file: ${SPEC_FILE}" '1'
-  fi
+  #if ( (( ${BUILD_TARGET_STAGE} == 2 )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == 4 )) && [[ ${BUILD_TARGET} == 'stage' ]] )
+  #then
+  #  mangleTemplate 'overwrite' "${SPEC_FILE}" "BUILD_ARCH VERSION_STAMP BASE_PROFILE BASE_PROFILE_PATH PORTAGE_SNAPSHOT BUILD_SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET BASE_PROFILE BUILD_ARCH BUILD_TARGET TARGET_KERNEL CATALYST_BASE_DIR"
+  #  (( $? == 0 )) || die "Could not manipulate spec file: ${SPEC_FILE}" '1'
+  #else
+  #  mangleTemplate 'overwrite' "${SPEC_FILE}" "BUILD_ARCH VERSION_STAMP BASE_PROFILE BASE_PROFILE_PATH PORTAGE_SNAPSHOT BUILD_SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET CATALYST_BASE_DIR"
+  #  (( $? == 0 )) || die "Could not manipulate spec file: ${SPEC_FILE}" '1'
+  #fi
+  mangleTemplate 'overwrite' "${SPEC_FILE}" "BASE_PROFILE BASE_PROFILE_PATH BUILD_ARCH BUILD_NAME BUILD_TARGET CATALYST_BASE_DIR CATALYST_OVERLAY_DIR CATALYST_USERS CPU_COUNT PORTAGE_SNAPSHOT BUILD_SRC_PATH TARGET_KERNEL VERSION_STAMP"
 
   (( BUILD_TARGET_STAGE == 1 )) && (( TAKE_SNAPSHOT == 1 )) && prepPortage
 
@@ -703,7 +715,7 @@ burnIso () {
 }
 
 dockStage () {
-  bzcat ${CURRENT_STAGE_BZ2} | ${DOCKER} import - "${BUILD_NAME}" || die "Failed to dockerize: ${CURRENT_STAGE_BZ2}" '1'
+  bzcat ${CATALYST_BUILD_DIR}/${CURRENT_STAGE_BZ2} | ${DOCKER} import - "${BUILD_NAME}" || die "Failed to dockerize: ${CURRENT_STAGE_BZ2}" '1'
 }
 
 menuSelect () {
@@ -714,7 +726,7 @@ menuSelect () {
 
   (( ${#@} < 1 )) && die "No arguments supplied" '2'
 
-  while getopts ":A:K:N:P:R:S:T:V:acdknopqrsvx" opt
+  while getopts ":A:K:N:P:R:S:T:V:acdknopqrsvx-" opt
   do
     case ${opt} in
       A)
@@ -806,6 +818,9 @@ menuSelect () {
         DEBUG='1'
         [[ ! ${CATALYST_ARGS} =~ "-d" ]] && CATALYST_ARGS="${CATALYST_ARGS} -d"
       ;;
+      -)
+        CLOAK_OUTPUT='1'
+      ;;
       \?)
         die "Unknown option: -$OPTARG" '1'
       ;;
@@ -820,6 +835,7 @@ menuSelect () {
 
   (( VERBOSITY > 0 || DEBUG == 1 )) && debug
 
+  [[ $- =~ "i" ]] || CLOAK_OUTPUT='1'
   [[ -n ${BUILD_TARGET} ]] || die "Target Unset" '1'
   (( OPENSTACK_SUPPORT == 1 && AWS_SUPPORT == 1 )) && die "Only one of -a or -o can be set" '2'
 
@@ -835,6 +851,7 @@ menuSelect () {
         [[ -n ${BASE_PROFILE} ]] || die "Profile (-P) unset" '2'
   fi
   main
+  (( DOCKER_SUPPORT == 1 )) && dockStage
 }
 
 main() {
@@ -870,7 +887,6 @@ main() {
   then
     burnIso || return 1
   fi
-  (( DOCKER_SUPPORT == 1 )) && dockStage
 }
 
 trap "echo && die 'SIGINT Caught' 1" SIGINT 
