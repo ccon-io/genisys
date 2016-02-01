@@ -27,6 +27,9 @@ declare -i AWS_SUPPORT='0'
 declare -i OPENSTACK_SUPPORT='0'
 declare -i TAKE_SNAPSHOT='1'
 declare -i CLOAK_OUTPUT='0'
+declare -i FRESH_STAGE_SNAPSHOT='0'
+
+declare -i DATE_SUFFIX=$(date "+%Y%m%d")
 
 declare -r COLOUR_RED='\033[0;31m'
 declare -r COLOUR_GREEN='\033[0;32m'
@@ -55,11 +58,12 @@ CATALYST_OVERLAY_DIR=${CATALYST_CONFIG_DIR}/overlays
 CATALYST_TMP_DIR="${CATALYST_BASE_DIR}/tmp"
 CATALYST_LOG_DIR="$(grep ^port_logdir ${CATALYST_CONFIG}|cut -d\" -f2)"
 CATALYST_SNAPSHOT_DIR="$(grep ^snapshot_cache ${CATALYST_CONFIG}|cut -d\" -f2)"
+STAGE_SNAPSHOT_LOG=${CATALYST_BUILD_DIR_BASE}/stage-snapshots-seen.log
 declare -r PID_FILE="${CATALYST_TMP_DIR}/genisys.pid"
 
 die () {
   (( $2 == 1 )) && log '2' "$1" && bundleLogs '2' 
-  (( $2 == 2 )) && log '4' "$1" && usage && exit
+  (( $2 == 2 )) && log '4' "$1" && usage
   if (( $2 == 0 ))
   then
     timeElapsed "START_TIME"
@@ -200,12 +204,7 @@ bundleLogs () {
 
   (( DEBUG == 1 )) && CATALYST_LOG_MASKS+=" *.dbg"
 
-  log 0 "Clearing empty logs"
 
-  [[ ${CATALYST_LOG_DIR} == / || -z ${CATALYST_LOG_DIR} ]] && die "Broken LOG_DIR" '1'
-  find ${CATALYST_LOG_DIR} -type f -empty -exec rm {} \; &> /dev/null
-  find ${CATALYST_LOG_DIR} -type d -empty -exec rm -rf {} \; &> /dev/null
-*
   log 0 "Collecting logs"
   for mask in ${CATALYST_LOG_MASKS[@]}
   do
@@ -221,8 +220,16 @@ bundleLogs () {
       [[ -d ${tmp_dir} ]] || return 1
       cd ${tmp_dir}/
       tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz .  &> /dev/null
-      (( $? == 0 )) && cd - && rm -rf ${tmp_dir}
-      cd -
+      local retVal=$?
+      if (( retVal == 0 ))
+      then
+        cd -
+        rm -rf ${tmp_dir}
+      else
+        cd -
+        log 2 "Tar operation returned non-zero"
+        return ${retVal}
+      fi
     ;;
     2)
       log 0 "Moving logs to: ${CATALYST_LOG_DIR}/failed/${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}"
@@ -374,6 +381,23 @@ jobWait() {
   return $?
 }
 
+logJanitor () {
+  local SCRIPT_SCOPE='1'
+  [[ ${CATALYST_LOG_DIR} == / || -z ${CATALYST_LOG_DIR} ]] && die "Broken CATALYST_LOG_DIR" '1'
+
+  log 0 "Clearing empty logs"
+  find ${CATALYST_LOG_DIR} -type f -empty -exec rm {} \; &> /dev/null
+  find ${CATALYST_LOG_DIR} -type d -empty -exec rm -rf {} \; &> /dev/null
+
+  STALE_LOGS=$(find ${CATALYST_LOG_DIR} -mindepth 1 -maxdepth 1 -type f ! -iname "*${RUN_ID}*" 2> /dev/null)
+
+  if [[ -n ${STALE_LOGS} ]]
+  then
+    log '0' "Cleaning up stale logs"
+    mv ${STALE_LOGS} ${CATALYST_LOG_DIR}/failed/stale/ || die "Could not move stale logs to: ${CATALYST_LOG_DIR}/failed/stale" '1'
+  fi
+}
+
 awsBundleImage () {
   verifyObject 'dir' "/${IMAGE_STORE}/ami/${BUILD_NAME}/${BUILD_VER}/"
   ${EC2_BUNDLE_IMAGE} -k ${CATALYST_CONFIG_DIR}/keys/key.pem -c /etc/ec2/amitools/cert-ec2.pem  -u ${AWS_ACCOUNT_ID} -i ${CATALYST_BASE_DIR}/iso/${BUILD_NAME}-${BUILD_ARCH}-${BASE_PROFILE}-installer-${BUILD_VER}.iso -d ${IMAGE_STORE}/ami/${BUILD_NAME}/${BUILD_VER}/ -r x86_64
@@ -520,29 +544,30 @@ prepPortage () {
 
 prepCatalyst () {
   (( $UID > 0 )) && die "Must run with root" '2'
+  if [[ -f ${PID_FILE} ]] 
+  then
+    checkPid $(cat ${PID_FILE})
+    PID_ALIVE='1' && die "Catalyst currently running" '1'
+    PID_ALIVE='0' && die "Catalyst crashed? stale pidfile" '1'
+  fi
   echo $$ > ${PID_FILE}
-  DATE_SUFFIX=$(date "+%Y%m%d")
   SPEC_FILE_PREFIX="stage${BUILD_TARGET_STAGE}"
 
   CATALYST_BUILD_DIR="${CATALYST_BUILD_DIR_BASE}/${BUILD_NAME}/${BUILD_TARGET}"
   declare -a CATALYST_DIRS=( "${CATALYST_BASE_DIR}" "${CATALYST_BUILD_DIR_BASE}" "${CATALYST_TMP_DIR}" "${CATALYST_SNAPSHOT_DIR}" "${CATALYST_LOG_DIR}" "${CATALYST_LOG_DIR}/failed/stale" "${CATALYST_TMP_DIR}/${BUILD_NAME}" "${CATALYST_BUILD_DIR}" "${CATALYST_LOG_DIR}/archive" )
 
-  STALE_LOGS=$(find ${CATALYST_LOG_DIR} -mindepth 1 -maxdepth 1 -type f ! -iname "*${RUN_ID}*" 2> /dev/null)
-
-  if [[ -n ${STALE_LOGS} ]]
-  then
-    log '0' "Cleaning up stale logs"
-    mv ${STALE_LOGS} ${CATALYST_LOG_DIR}/failed/stale/ || die "Could not move stale logs to: ${CATALYST_LOG_DIR}/failed/stale" '1'
-  fi
+  logJanitor
 
   mount|grep "${CATALYST_TMP_DIR}" &> /dev/null
-  (( $? == 0 )) && die "Looks like stuff is still mounted in the chroot. This makes pain. Check: mount | grep ${CATALYST_TMP_DIR}" '1'
+  (( $? == 0 )) && die "Chroot looks to be still mounted. This would make pain. Check: mount | grep ${CATALYST_TMP_DIR}" '1'
 
   if [[ ${BASE_PROFILE} == 'hardened' ]] 
   then
+    KERNEL_SOURCES='hardened-sources'
     BASE_PROFILE_PATH="${BASE_PROFILE}/linux/${BUILD_ARCH}"
   elif [[ ${BASE_PROFILE} == 'vanilla' ]]
   then
+    KERNEL_SOURCES='gentoo-sources'
     BASE_PROFILE_PATH="default/linux/${BUILD_ARCH}/13.0"
   fi
 
@@ -602,6 +627,9 @@ prepCatalyst () {
   fi
 
   DIST_STAGE3_LATEST="$(fetchRemote 'print' ${DIST_BASE_URL}/${BUILD_ARCH}/autobuilds/${STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
+  grep ${DIST_STAGE3_LATEST} ${STAGE_SNAPSHOT_LOG} || FRESH_STAGE_SNAPSHOT=1
+
+  (( FRESH_STAGE_SNAPSHOT == 1 )) && (( BUILD_TARGET_STAGE > 1 )) && die "Build version: ${DIST_STAGE3_LATEST} has not been seen before. Unable to build stage: ${BUILD_TARGET_STAGE}" 1
 
   [[ -z ${BUILD_VERSION} ]] && BUILD_VERSION="${DIST_STAGE3_LATEST}"
 
@@ -678,15 +706,7 @@ prepCatalyst () {
 
   BUILD_SRC_PATH="${BUILD_NAME}/${BUILD_TARGET}/${BUILD_SRC_PATH_PREFIX}-${DIST_STAGE3_LATEST}"
 
-  #if ( (( ${BUILD_TARGET_STAGE} == 2 )) && [[ ${BUILD_TARGET} == 'livecd' ]] ) || ( (( ${BUILD_TARGET_STAGE} == 4 )) && [[ ${BUILD_TARGET} == 'stage' ]] )
-  #then
-  #  mangleTemplate 'overwrite' "${SPEC_FILE}" "BUILD_ARCH VERSION_STAMP BASE_PROFILE BASE_PROFILE_PATH PORTAGE_SNAPSHOT BUILD_SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET BASE_PROFILE BUILD_ARCH BUILD_TARGET TARGET_KERNEL CATALYST_BASE_DIR"
-  #  (( $? == 0 )) || die "Could not manipulate spec file: ${SPEC_FILE}" '1'
-  #else
-  #  mangleTemplate 'overwrite' "${SPEC_FILE}" "BUILD_ARCH VERSION_STAMP BASE_PROFILE BASE_PROFILE_PATH PORTAGE_SNAPSHOT BUILD_SRC_PATH BUILD_NAME CPU_COUNT CATALYST_USERS BUILD_TARGET CATALYST_BASE_DIR"
-  #  (( $? == 0 )) || die "Could not manipulate spec file: ${SPEC_FILE}" '1'
-  #fi
-  mangleTemplate 'overwrite' "${SPEC_FILE}" "BASE_PROFILE BASE_PROFILE_PATH BUILD_ARCH BUILD_NAME BUILD_TARGET CATALYST_BASE_DIR CATALYST_OVERLAY_DIR CATALYST_USERS CPU_COUNT PORTAGE_SNAPSHOT BUILD_SRC_PATH TARGET_KERNEL VERSION_STAMP"
+  mangleTemplate 'overwrite' "${SPEC_FILE}" "BASE_PROFILE BASE_PROFILE_PATH BUILD_ARCH BUILD_NAME BUILD_TARGET CATALYST_BASE_DIR CATALYST_OVERLAY_DIR CATALYST_USERS CPU_COUNT KERNEL_SOURCES PORTAGE_SNAPSHOT BUILD_SRC_PATH TARGET_KERNEL VERSION_STAMP"
 
   (( BUILD_TARGET_STAGE == 1 )) && (( TAKE_SNAPSHOT == 1 )) && prepPortage
 
@@ -699,6 +719,7 @@ prepCatalyst () {
   fi
 
   runCatalyst 'build' || die "Catalyst failed to build" "1"
+  (( FRESH_STAGE_SNAPSHOT == 1 )) && echo "${DIST_STAGE3_LATEST}" >> ${STAGE_SNAPSHOT_LOG}
 }
 
 burnAmi () {
@@ -746,9 +767,9 @@ menuSelect () {
         BASE_PROFILE="${OPTARG}"
       ;;
       R)
-       PORTAGE_SNAPSHOT="${OPTARG}" 
-       TAKE_SNAPSHOT='0'
-       [[ ${PORTAGE_SNAPSHOT} =~ ^[0-9]+$ ]] || die "Invalid format: ${PORTAGE_SNAPSHOT} should look something like: ${DATE_SUFFIX}" '2'
+        PORTAGE_SNAPSHOT="${OPTARG}" 
+        TAKE_SNAPSHOT='0'
+        [[ ${PORTAGE_SNAPSHOT} =~ ^[0-9]+$ ]] || die "Invalid format: ${PORTAGE_SNAPSHOT}, should look something like: ${DATE_SUFFIX}" '2'
       ;;
       S)
         [[ -z ${BUILD_TARGET_STAGE} ]] && BUILD_TARGET_STAGE="${OPTARG}"
@@ -786,6 +807,7 @@ menuSelect () {
       ;;
       b)
         CLOAK_OUTPUT='1'
+        QUIET_OUTPUT='1'
       ;;
       c)
         CLEAR_CCACHE='1'
@@ -840,7 +862,7 @@ menuSelect () {
   (( VERBOSITY > 0 || DEBUG == 1 )) && debug
 
   [[ $- =~ "i" ]] || CLOAK_OUTPUT='1'
-  [[ -n ${BUILD_TARGET} ]] || die "Target Unset" '1'
+  [[ -n ${BUILD_TARGET} ]] || die "Target Unset" '2'
   (( OPENSTACK_SUPPORT == 1 && AWS_SUPPORT == 1 )) && die "Only one of -a or -o can be set" '2'
 
   [[ ${BASE_PROFILE} == 'hardened' || ${BASE_PROFILE} == 'vanilla' ]] || die "Unknown profile: ${BASE_PROFILE}" '2'
