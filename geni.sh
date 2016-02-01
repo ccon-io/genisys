@@ -204,6 +204,7 @@ bundleLogs () {
 
   (( DEBUG == 1 )) && CATALYST_LOG_MASKS+=" *.dbg"
 
+  logJanitor empty
 
   log 0 "Collecting logs"
   for mask in ${CATALYST_LOG_MASKS[@]}
@@ -215,16 +216,20 @@ bundleLogs () {
     1)
       CATALYST_LOGS+=" ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       tmp_dir=$(mktemp -d)
-      log 0 "Compressing logs"
-      mv ${CATALYST_LOGS[@]} ${tmp_dir}/
-      [[ -d ${tmp_dir} ]] || return 1
+      
+      verifyObject 'dir' "${tmp_dir}/${RUN_ID}" || return 1
+
+      mv ${CATALYST_LOGS[@]} ${tmp_dir}/${RUN_ID}
       cd ${tmp_dir}/
-      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz .  &> /dev/null
+
+      log 0 "Compressing logs"
+      tar czvf ${CATALYST_LOG_DIR}/archive/catalyst-build-${BUILD_NAME}-${BUILD_TARGET}-stage${BUILD_TARGET_STAGE}-${RUN_ID}.tgz ${RUN_ID} &> /dev/null
       local retVal=$?
       if (( retVal == 0 ))
       then
         cd -
         rm -rf ${tmp_dir}
+        return 0
       else
         cd -
         log 2 "Tar operation returned non-zero"
@@ -385,17 +390,26 @@ logJanitor () {
   local SCRIPT_SCOPE='1'
   [[ ${CATALYST_LOG_DIR} == / || -z ${CATALYST_LOG_DIR} ]] && die "Broken CATALYST_LOG_DIR" '1'
 
-  log 0 "Clearing empty logs"
-  find ${CATALYST_LOG_DIR} -type f -empty -exec rm {} \; &> /dev/null
-  find ${CATALYST_LOG_DIR} -type d -empty -exec rm -rf {} \; &> /dev/null
+  case $1 in 
+    empty)
+      log 0 "Clearing empty logs"
+      find ${CATALYST_LOG_DIR} -type f -empty -exec rm {} \; &> /dev/null
+      find ${CATALYST_LOG_DIR} -type d -empty -exec rm -rf {} \; &> /dev/null
+    ;;
+    stale)
+      STALE_LOGS=$(find ${CATALYST_LOG_DIR} -mindepth 1 -maxdepth 1 -type f ! -iname "*${RUN_ID}*" 2> /dev/null)
 
-  STALE_LOGS=$(find ${CATALYST_LOG_DIR} -mindepth 1 -maxdepth 1 -type f ! -iname "*${RUN_ID}*" 2> /dev/null)
-
-  if [[ -n ${STALE_LOGS} ]]
-  then
-    log '0' "Cleaning up stale logs"
-    mv ${STALE_LOGS} ${CATALYST_LOG_DIR}/failed/stale/ || die "Could not move stale logs to: ${CATALYST_LOG_DIR}/failed/stale" '1'
-  fi
+      if [[ -n ${STALE_LOGS} ]]
+      then
+        log '0' "Cleaning up stale logs"
+        mv ${STALE_LOGS} ${CATALYST_LOG_DIR}/failed/stale/ || die "Could not move stale logs to: ${CATALYST_LOG_DIR}/failed/stale" '1'
+      fi
+    ;;
+    all)
+      logJanitor empty
+      logJanitor stale
+    ;;
+  esac
 }
 
 awsBundleImage () {
@@ -471,8 +485,24 @@ prepCatalystLiveCD () {
 
 verifyCatalystDeps () {
   local SCRIPT_SCOPE='1'
+
+  (( $UID > 0 )) && die "Must run with root" '2'
+
+  grep ${DIST_STAGE3_LATEST} ${STAGE_SNAPSHOT_LOG} || FRESH_STAGE_SNAPSHOT=1
+  (( FRESH_STAGE_SNAPSHOT == 1 )) && (( BUILD_TARGET_STAGE > 1 )) && die "Build version: ${DIST_STAGE3_LATEST} has not been seen before. Unable to build stage: ${BUILD_TARGET_STAGE}" 1
+
+  if [[ -f ${PID_FILE} ]] 
+  then
+    checkPid $(cat ${PID_FILE})
+    PID_ALIVE='1' && die "Catalyst currently running" '1'
+    PID_ALIVE='0' && die "Catalyst crashed? stale pidfile" '1'
+  fi
+
   WORK_DIR=${CATALYST_BUILD_DIR}
   (( BUILD_TARGET_STAGE == 1 )) && WORK_DIR=${CATALYST_SNAPSHOT_DIR}
+
+  mount|grep "${CATALYST_TMP_DIR}" &> /dev/null
+  (( $? == 0 )) && die "Chroot looks to be still mounted. This would make pain. Check: mount | grep ${CATALYST_TMP_DIR}" '1'
 
   log '0' "Checking for required directories"
   for dir in ${CATALYST_DIRS[@]}
@@ -526,6 +556,11 @@ verifyCatalystDeps () {
     (( VERBOSITY > 0 )) && log '0' "Copying seed stage to build dir"
     cp ${WORK_DIR}/${SEED_STAGE} ${CATALYST_BUILD_DIR}/
   fi
+
+  logJanitor all
+
+
+  echo $$ > ${PID_FILE}
 }
 
 prepPortage () {
@@ -542,24 +577,10 @@ prepPortage () {
   runCatalyst 'snapshot' || die "Catalyst failed to make a snapshot of portage" "1"
 }
 
-prepCatalyst () {
-  (( $UID > 0 )) && die "Must run with root" '2'
-  if [[ -f ${PID_FILE} ]] 
-  then
-    checkPid $(cat ${PID_FILE})
-    PID_ALIVE='1' && die "Catalyst currently running" '1'
-    PID_ALIVE='0' && die "Catalyst crashed? stale pidfile" '1'
-  fi
-  echo $$ > ${PID_FILE}
-  SPEC_FILE_PREFIX="stage${BUILD_TARGET_STAGE}"
+buildRunVars () {
 
   CATALYST_BUILD_DIR="${CATALYST_BUILD_DIR_BASE}/${BUILD_NAME}/${BUILD_TARGET}"
   declare -a CATALYST_DIRS=( "${CATALYST_BASE_DIR}" "${CATALYST_BUILD_DIR_BASE}" "${CATALYST_TMP_DIR}" "${CATALYST_SNAPSHOT_DIR}" "${CATALYST_LOG_DIR}" "${CATALYST_LOG_DIR}/failed/stale" "${CATALYST_TMP_DIR}/${BUILD_NAME}" "${CATALYST_BUILD_DIR}" "${CATALYST_LOG_DIR}/archive" )
-
-  logJanitor
-
-  mount|grep "${CATALYST_TMP_DIR}" &> /dev/null
-  (( $? == 0 )) && die "Chroot looks to be still mounted. This would make pain. Check: mount | grep ${CATALYST_TMP_DIR}" '1'
 
   if [[ ${BASE_PROFILE} == 'hardened' ]] 
   then
@@ -571,6 +592,7 @@ prepCatalyst () {
     BASE_PROFILE_PATH="default/linux/${BUILD_ARCH}/13.0"
   fi
 
+  SPEC_FILE_PREFIX="stage${BUILD_TARGET_STAGE}"
   if (( NO_MULTILIB == 1 ))
   then
     BASE_PROFILE_PATH="${BASE_PROFILE_PATH}/no-multilib"
@@ -627,9 +649,6 @@ prepCatalyst () {
   fi
 
   DIST_STAGE3_LATEST="$(fetchRemote 'print' ${DIST_BASE_URL}/${BUILD_ARCH}/autobuilds/${STAGE3_MANIFEST}|grep bz2|cut -d/ -f1)"
-  grep ${DIST_STAGE3_LATEST} ${STAGE_SNAPSHOT_LOG} || FRESH_STAGE_SNAPSHOT=1
-
-  (( FRESH_STAGE_SNAPSHOT == 1 )) && (( BUILD_TARGET_STAGE > 1 )) && die "Build version: ${DIST_STAGE3_LATEST} has not been seen before. Unable to build stage: ${BUILD_TARGET_STAGE}" 1
 
   [[ -z ${BUILD_VERSION} ]] && BUILD_VERSION="${DIST_STAGE3_LATEST}"
 
@@ -663,6 +682,11 @@ prepCatalyst () {
 
   CURRENT_STAGE_BZ2=${SEED_STAGE/stage[1-4]/stage${BUILD_TARGET_STAGE}}
   CURRENT_STAGE=$( basename ${CURRENT_STAGE_BZ2} .tar.bz2)
+}
+
+prepCatalyst () {
+
+  buildRunVars
 
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
   
