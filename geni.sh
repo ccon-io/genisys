@@ -91,7 +91,7 @@ log () {
     ;;
     1)
       (( CLOAK_OUTPUT == 0 )) && printf "${prefix// /\\t}${COLOUR_GREEN}->${COLOUR_RST} $2\n"
-      (( CLOAK_OUTPUT == 1 )) && echo "${log_tag}: " "$2"
+      (( CLOAK_OUTPUT == 1 )) && (( VERBOSITY > 0 )) && echo "${log_tag}: " "$2"
       ${LOGGER} -p daemon.info -t "${log_tag}" "$2"
     ;;
     2)
@@ -189,7 +189,7 @@ runWrapper () {
   do
     BUILD_TARGET_STAGE="$i"
     BUILD_START_TIME=$(date +%s)
-    main || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
+    gauntlet || die "Batch run failed in stage: ${BUILD_TARGET_STAGE}" '1'
     timeElapsed BUILD_START_TIME
     log '1' "Stage ${BUILD_TARGET_STAGE}: Completed in: ${BUILD_TIME}"
   done
@@ -201,8 +201,6 @@ bundleLogs () {
   local SCRIPT_SCOPE='1'
   local CATALYST_LOGS=()
   local CATALYST_LOG_MASKS=( '*.log' '*.info' '*.err' )
-
-  (( DEBUG == 1 )) && CATALYST_LOG_MASKS+=" *.dbg"
 
   logJanitor empty
 
@@ -402,7 +400,7 @@ logJanitor () {
       if [[ -n ${STALE_LOGS} ]]
       then
         log '0' "Cleaning up stale logs"
-        mv ${STALE_LOGS} ${CATALYST_LOG_DIR}/failed/stale/ || die "Could not move stale logs to: ${CATALYST_LOG_DIR}/failed/stale" '1'
+        mv ${STALE_LOGS} ${CATALYST_LOG_DIR}/stale/ || die "Could not move stale logs to: ${CATALYST_LOG_DIR}/stale" '1'
       fi
     ;;
     all)
@@ -469,9 +467,9 @@ runCatalyst () {
 
       (( retVal > 0 )) && return "${retVal}"
       bundleLogs '1'
-      return 0
     ;;
   esac
+  return 0
 }
 
 prepCatalystLiveCD () {
@@ -488,7 +486,7 @@ verifyCatalystDeps () {
 
   (( $UID > 0 )) && die "Must run with root" '2'
 
-  grep ${DIST_STAGE3_LATEST} ${STAGE_SNAPSHOT_LOG} || FRESH_STAGE_SNAPSHOT=1
+  grep ${DIST_STAGE3_LATEST} ${STAGE_SNAPSHOT_LOG} &> /dev/null || FRESH_STAGE_SNAPSHOT=1
   (( FRESH_STAGE_SNAPSHOT == 1 )) && (( BUILD_TARGET_STAGE > 1 )) && die "Build version: ${DIST_STAGE3_LATEST} has not been seen before. Unable to build stage: ${BUILD_TARGET_STAGE}" 1
 
   if [[ -f ${PID_FILE} ]] 
@@ -516,6 +514,7 @@ verifyCatalystDeps () {
   log '0' "Checking for stage files"
   for file in "${SEED_STAGE_DIGESTS}" "${SEED_STAGE_CONTENTS}" "${SEED_STAGE_ASC}" "${SEED_STAGE}"
   do
+    (( BUILD_TARGET_STAGE == 2 )) && [[ ${BUILD_TARGET} == livecd ]] && break
     #Fix Me... sign your builds!
     (( BUILD_TARGET_STAGE > 1 )) && [[ ${file} =~ "asc"$ ]] && continue
     local SCRIPT_SCOPE='2'
@@ -527,7 +526,7 @@ verifyCatalystDeps () {
         fetchRemote 'parallel' "${DIST_BASE_URL}/${STAGE3_URL_BASE}/${file}" "${WORK_DIR}"
         (( $? == 0 )) || die "Failed to fetch: ${file}" "1"
       else
-        die "Cant find: $file" '1'
+        die "Can't find: ${WORK_DIR}/$file" '1'
       fi
     fi
   done
@@ -547,7 +546,12 @@ verifyCatalystDeps () {
       (( $? == 0 )) || die "Whirlpool checksum failed for: ${file}" "1"
     done
   else
-    die "Can't find: ${WORK_DIR}/${SEED_STAGE}" '1'
+    if (( BUILD_TARGET_STAGE == 2 )) && [[ ${BUILD_TARGET} == livecd ]] 
+    then
+      log '0' "Not checking for seed stage: ${WORK_DIR}/${SEED_STAGE}"
+    else
+      die "Can't find: ${WORK_DIR}/${SEED_STAGE}" '1'
+    fi
   fi
 
   if (( BUILD_TARGET_STAGE == 1 ))
@@ -559,8 +563,8 @@ verifyCatalystDeps () {
 
   logJanitor all
 
-
-  echo $$ > ${PID_FILE}
+  (( BATCH_MODE == 0 || BUILD_TARGET_STAGE == 1 )) && echo $$ > ${PID_FILE}
+  return 0
 }
 
 prepPortage () {
@@ -578,10 +582,6 @@ prepPortage () {
 }
 
 buildRunVars () {
-
-  CATALYST_BUILD_DIR="${CATALYST_BUILD_DIR_BASE}/${BUILD_NAME}/${BUILD_TARGET}"
-  declare -a CATALYST_DIRS=( "${CATALYST_BASE_DIR}" "${CATALYST_BUILD_DIR_BASE}" "${CATALYST_TMP_DIR}" "${CATALYST_SNAPSHOT_DIR}" "${CATALYST_LOG_DIR}" "${CATALYST_LOG_DIR}/failed/stale" "${CATALYST_TMP_DIR}/${BUILD_NAME}" "${CATALYST_BUILD_DIR}" "${CATALYST_LOG_DIR}/archive" )
-
   if [[ ${BASE_PROFILE} == 'hardened' ]] 
   then
     KERNEL_SOURCES='hardened-sources'
@@ -686,12 +686,15 @@ buildRunVars () {
 
 prepCatalyst () {
 
-  buildRunVars
+  CATALYST_BUILD_DIR="${CATALYST_BUILD_DIR_BASE}/${BUILD_NAME}/${BUILD_TARGET}"
+  declare -a CATALYST_DIRS=( "${CATALYST_BASE_DIR}" "${CATALYST_BUILD_DIR_BASE}" "${CATALYST_TMP_DIR}" "${CATALYST_SNAPSHOT_DIR}" "${CATALYST_LOG_DIR}" "${CATALYST_LOG_DIR}/stale" "${CATALYST_TMP_DIR}/${BUILD_NAME}" "${CATALYST_BUILD_DIR}" "${CATALYST_LOG_DIR}/archive" )
+
+  buildRunVars || die "Could not construct variables" '1'
 
   [[ ${BUILD_TARGET} == livecd ]] && prepCatalystLiveCD
   
   log 0 "Checking dependencies"
-  verifyCatalystDeps || die "Failed to verify Seed Stage." '1'
+  verifyCatalystDeps || die "Failed to verify Catalyst Dependencies" '1'
   verifyTemplates || die "Could not verify templates" '1'
   
   log '1' "Starting run ID: ${RUN_ID} for: ${BUILD_NAME} with a ${BASE_PROFILE} stack on ${BUILD_ARCH} for Stage: ${BUILD_TARGET_STAGE} for delivery by: ${BUILD_TARGET}"
@@ -744,6 +747,7 @@ prepCatalyst () {
 
   runCatalyst 'build' || die "Catalyst failed to build" "1"
   (( FRESH_STAGE_SNAPSHOT == 1 )) && echo "${DIST_STAGE3_LATEST}" >> ${STAGE_SNAPSHOT_LOG}
+  return 0
 }
 
 burnAmi () {
@@ -865,7 +869,7 @@ menuSelect () {
       ;;
       v)
         (( VERBOSITY < 5 )) && (( ++VERBOSITY ))
-        (( VERBOSITY == 1 )) && CATALYST_ARGS="${CATALYST_ARGS} -v"
+        (( VERBOSITY == 2 )) && CATALYST_ARGS="${CATALYST_ARGS} -v"
       ;;
       x)
         DEBUG='1'
@@ -900,13 +904,14 @@ menuSelect () {
         [[ -n ${BUILD_NAME} ]] || die "Build name (-N) unset" '2'
         [[ -n ${BASE_PROFILE} ]] || die "Profile (-P) unset" '2'
   fi
-  main
+  gauntlet
   (( DOCKER_SUPPORT == 1 )) && dockStage
 }
 
-main() {
+gauntlet() {
   TIME_NOW=$(date +%s)
   RUN_ID=${TIME_NOW}
+  [[ ${BUILD_TARGET_STAGE} == "all" ]] && BATCH_MODE=1
   if [[ ${BUILD_TARGET} == "livecd" ]]
   then
     if [[ ${BUILD_TARGET_STAGE} == "all" ]]
