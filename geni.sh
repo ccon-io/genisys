@@ -207,7 +207,7 @@ bundleLogs () {
   log 0 "Collecting logs"
   for mask in ${CATALYST_LOG_MASKS[@]}
   do
-    CATALYST_LOGS+=" $(find ${CATALYST_LOG_DIR} -type f -not -path "*/archive/*" -not -path "*/failed/*" -name ${mask})"
+    CATALYST_LOGS+=" $(find ${CATALYST_LOG_DIR} -type f -not -path "*/archive/*" -not -path "*/failed/*" -not -path "*/stale/*" -name ${mask})"
   done
   
   case $1 in
@@ -392,7 +392,6 @@ logJanitor () {
     empty)
       log 0 "Clearing empty logs"
       find ${CATALYST_LOG_DIR} -type f -empty -exec rm {} \; &> /dev/null
-      find ${CATALYST_LOG_DIR} -type d -empty -exec rm -rf {} \; &> /dev/null
     ;;
     stale)
       STALE_LOGS=$(find ${CATALYST_LOG_DIR} -mindepth 1 -maxdepth 1 -type f ! -iname "*${RUN_ID}*" 2> /dev/null)
@@ -491,9 +490,12 @@ verifyCatalystDeps () {
 
   if [[ -f ${PID_FILE} ]] 
   then
-    checkPid $(cat ${PID_FILE})
-    PID_ALIVE='1' && die "Catalyst currently running" '1'
-    PID_ALIVE='0' && die "Catalyst crashed? stale pidfile" '1'
+    if (( BATCH_MODE == 0 || BUILD_TARGET_STAGE == 1 ))
+    then
+      checkPid $(cat ${PID_FILE})
+      PID_ALIVE='1' && die "Catalyst currently running" '1'
+      PID_ALIVE='0' && die "Catalyst crashed? stale pidfile" '1'
+    fi
   fi
 
   WORK_DIR=${CATALYST_BUILD_DIR}
@@ -561,9 +563,7 @@ verifyCatalystDeps () {
     cp ${WORK_DIR}/${SEED_STAGE} ${CATALYST_BUILD_DIR}/
   fi
 
-  logJanitor all
 
-  (( BATCH_MODE == 0 || BUILD_TARGET_STAGE == 1 )) && echo $$ > ${PID_FILE}
   return 0
 }
 
@@ -696,6 +696,10 @@ prepCatalyst () {
   log 0 "Checking dependencies"
   verifyCatalystDeps || die "Failed to verify Catalyst Dependencies" '1'
   verifyTemplates || die "Could not verify templates" '1'
+
+  logJanitor all
+
+  (( BATCH_MODE == 0 || BUILD_TARGET_STAGE == 1 )) && echo $$ > ${PID_FILE}
   
   log '1' "Starting run ID: ${RUN_ID} for: ${BUILD_NAME} with a ${BASE_PROFILE} stack on ${BUILD_ARCH} for Stage: ${BUILD_TARGET_STAGE} for delivery by: ${BUILD_TARGET}"
 
