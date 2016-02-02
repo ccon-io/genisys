@@ -894,17 +894,18 @@ menuSelect () {
   (( VERBOSITY > 0 || DEBUG == 1 )) && debug
 
   [[ $- =~ "i" ]] || CLOAK_OUTPUT='1'
-  [[ -n ${BUILD_TARGET} ]] || die "Target Unset" '2'
+
   (( OPENSTACK_SUPPORT == 1 && AWS_SUPPORT == 1 )) && die "Only one of -a or -o can be set" '2'
 
   [[ ${BASE_PROFILE} == 'hardened' || ${BASE_PROFILE} == 'vanilla' ]] || die "Unknown profile: ${BASE_PROFILE}" '2'
   [[ ${BASE_PROFILE} == 'vanilla' ]] && (( SELINUX == 1 )) && die "Selinux not supported on profile: ${BASE_PROFILE}" '2'
   
+  [[ -n ${BUILD_TARGET} ]] || die "Target (-T) unset" '2'
   if [[ ${BUILD_TARGET}='stage' || ${BUILD_TARGET}='livecd' ]]
   then
         [[ -n ${BUILD_TARGET_STAGE} ]] || die "Stage (-S) unset" '2'
         [[ -n ${BUILD_ARCH} ]] || die "ARCH (-A) unset" '2'
-        [[ -n ${TARGET_KERNEL} ]] || die "Target kernel (-K) Unset" '2'
+        [[ -n ${TARGET_KERNEL} ]] || die "Target kernel (-K) unset" '2'
         [[ -n ${BUILD_NAME} ]] || die "Build name (-N) unset" '2'
         [[ -n ${BASE_PROFILE} ]] || die "Profile (-P) unset" '2'
   fi
