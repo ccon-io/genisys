@@ -209,10 +209,11 @@ bundleLogs () {
   do
     CATALYST_LOGS+=" $(find ${CATALYST_LOG_DIR} -type f -not -path "*/archive/*" -not -path "*/failed/*" -not -path "*/stale/*" -name ${mask})"
   done
+
+  CATALYST_LOGS+=" ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
   
   case $1 in
     1)
-      CATALYST_LOGS+=" ${CATALYST_BUILD_DIR}/${SPEC_FILE}"
       tmp_dir=$(mktemp -d)
       
       verifyObject 'dir' "${tmp_dir}/${RUN_ID}" || return 1
@@ -750,7 +751,7 @@ prepCatalyst () {
   fi
 
   runCatalyst 'build' || die "Catalyst failed to build" "1"
-  (( FRESH_STAGE_SNAPSHOT == 1 )) && echo "${DIST_STAGE3_LATEST}" >> ${STAGE_SNAPSHOT_LOG}
+  (( FRESH_STAGE_SNAPSHOT == 1 )) && echo "${DIST_STAGE3_LATEST}" >> ${STAGE_SNAPSHOT_LOG} && FRESH_STAGE_SNAPSHOT=0
   return 0
 }
 
