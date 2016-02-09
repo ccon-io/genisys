@@ -194,6 +194,8 @@ runWrapper () {
     log '1' "Stage ${BUILD_TARGET_STAGE}: Completed in: ${BUILD_TIME}"
   done
 
+  (( DOCKER_SUPPORT == 1 )) && dockStage
+
   die "${BUILD_TARGET} built" '0'
 }
 
@@ -773,7 +775,9 @@ burnIso () {
 
 dockStage () {
   log '0' "Dockerizing ${CATALYST_BUILD_DIR}/${CURRENT_STAGE_BZ2}"
-  bzcat ${CATALYST_BUILD_DIR}/${CURRENT_STAGE_BZ2} | ${DOCKER} import - "${BUILD_NAME}" || die "Failed to dockerize: ${CURRENT_STAGE_BZ2}" '1'
+  bzcat ${CATALYST_BUILD_DIR}/${CURRENT_STAGE_BZ2} | ${DOCKER} import --message "New stage for genisys run: ${RUN_ID}" - "${BUILD_NAME}/${DIST_STAGE3_LATEST}" || die "Failed to dockerize: ${CURRENT_STAGE_BZ2}" '1'
+  log '1' "Dockerized ${CATALYST_BUILD_DIR}/${CURRENT_STAGE_BZ2}"
+
 }
 
 menuSelect () {
@@ -911,7 +915,6 @@ menuSelect () {
         [[ -n ${BASE_PROFILE} ]] || die "Profile (-P) unset" '2'
   fi
   gauntlet
-  (( DOCKER_SUPPORT == 1 )) && dockStage
 }
 
 gauntlet() {
@@ -948,6 +951,7 @@ gauntlet() {
   then
     burnIso || return 1
   fi
+  (( BATCH_MODE == 0 && DOCKER_SUPPORT == 1 )) && dockStage
 }
 
 trap "echo && die 'SIGINT Caught' 1" SIGINT 
