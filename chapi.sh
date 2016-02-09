@@ -34,10 +34,20 @@ gene () {
   #Gene Geni ;)
   case $1 in
     1)
-      ${GENI} -T stage -S all -A ${ARCH_CUR} -K ${KERNEL_CUR} -N $(rand wrd 1) -P ${2} ${3}
+      if (( PERF == 1 )) 
+      then
+        perf stat -- ${GENI} -T stage -S all -A ${ARCH_CUR} -K ${KERNEL_CUR} -N $(rand wrd 1) -P ${2} ${3}
+      else
+        ${GENI} -T stage -S all -A ${ARCH_CUR} -K ${KERNEL_CUR} -N $(rand wrd 1) -P ${2} ${3}
+      fi
     ;;
     2)
-      ${GENI} ${2} ${3}
+      if (( PERF == 1 )) 
+      then
+        perf stat -- ${GENI} ${2} ${3}
+      else
+        ${GENI} ${2} ${3}
+      fi
     ;;
   esac
 }
@@ -175,11 +185,21 @@ masher () {
 }
 
 main () {
-  case $(rand int 2 1) in
+  case $(rand int 4 1) in
     1)
+      PERF=0
       fuzzer $(rand int 2 1)
     ;;
     2)
+      PERF=0
+      masher $(rand int 2 1)
+    ;;
+    3)
+      PERF=1
+      fuzzer $(rand int 2 1)
+    ;;
+    4)
+      PERF=1
       masher $(rand int 2 1)
     ;;
   esac

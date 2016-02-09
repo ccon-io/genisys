@@ -952,6 +952,7 @@ gauntlet() {
     burnIso || return 1
   fi
   (( BATCH_MODE == 0 && DOCKER_SUPPORT == 1 )) && dockStage
+  return 0
 }
 
 trap "echo && die 'SIGINT Caught' 1" SIGINT 
