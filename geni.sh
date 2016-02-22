@@ -18,6 +18,7 @@ declare -i BATCH_MODE='0'
 declare -i SCRIPT_SCOPE='0'
 declare -i VERBOSITY='0'
 declare -i DEBUG='0'
+declare -i PURGE='0'
 declare -i CLEAR_CCACHE='0'
 declare -i QUIET_OUTPUT='0'
 declare -i NO_MULTILIB='0'
@@ -789,6 +790,13 @@ prepCatalyst () {
     (( $? > 0 )) &&  log '2' "Failed to clear ccache"
   fi
 
+  if (( PURGE == 1 ))
+  then
+    local SCRIPT_SCOPE='3'
+    log '0' "Cleaning snapshots"
+    find ${CATALYST_SNAPSHOT_DIR} -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} \;
+  fi
+
   runCatalyst 'build' || die "Catalyst failed to build" "1"
   (( FRESH_STAGE_SNAPSHOT == 1 )) && echo "${DIST_STAGE3_LATEST}" >> ${STAGE_SNAPSHOT_LOG} && FRESH_STAGE_SNAPSHOT=0
   return 0
@@ -918,6 +926,7 @@ menuSelect () {
         [[ ! ${CATALYST_ARGS} =~ "-p" ]] && CATALYST_ARGS="${CATALYST_ARGS} -p"
         [[ ! ${CATALYST_ARGS} =~ "-a" ]] && CATALYST_ARGS="${CATALYST_ARGS} -a"
         CLEAR_CCACHE='1'
+        PURGE='1'
       ;;
       q)
         QUIET_OUTPUT='1'
