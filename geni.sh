@@ -850,7 +850,7 @@ menuSelect () {
         TAKE_SNAPSHOT='0'
       ;;
       S)
-        ( (( OPTARG <= 4 && OPTARG > 0 )) || [[ ${OPTARG} == all ]] ) || die "Invalid stage selection: ${OPTARG}" '2'
+        ( [[ "${OPTARG}" == 'all' ]] || (( OPTARG <= 4 && OPTARG > 0 )) ) || die "Invalid stage selection: ${OPTARG}" '2'
         [[ -z ${BUILD_TARGET_STAGE} ]] && BUILD_TARGET_STAGE="${OPTARG}"
       ;;
       T)
