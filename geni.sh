@@ -950,8 +950,6 @@ menuSelect () {
 
   (( VERBOSITY > 0 || DEBUG == 1 )) && debug
 
-  #[[ $- =~ "i" ]] || CLOAK_OUTPUT='1'
-
   (( OPENSTACK_SUPPORT == 1 && AWS_SUPPORT == 1 )) && die "Only one of -a or -o can be set" '2'
 
   [[ ${BASE_PROFILE} == 'hardened' || ${BASE_PROFILE} == 'vanilla' ]] || die "Unknown profile: ${BASE_PROFILE}" '2'
