@@ -135,6 +135,43 @@ timeElapsed () {
     BUILD_TIME="${hours}h:${minutes}m:${seconds}s"
 }
 
+validatIn () {
+  local method=$1
+  local input=$2
+  local length=""
+  if (( $# == 3 ))
+  then
+    local length=$3
+  fi
+  case ${method} in
+    alphanum)
+      if [[ -z $length ]]
+      then
+        [[ ${input} =~ ^[a-zA-Z0-9_-]*$ ]]
+      else
+        [[ ${input} =~ ^[a-zA-Z0-9_-]*$ ]] && (( ${#input} < length ))
+      fi
+    ;;
+    num)
+      if [[ -z $length ]]
+      then
+        [[ ${input} =~ ^[0-9]*$ ]]
+      else
+        [[ ${input} =~ ^[0-9]*$ ]] && (( ${#input} < length ))
+      fi
+    ;;
+    dec)
+      if [[ -z $length ]]
+      then
+        [[ ${input} =~ ^[0-9.]*$ ]]
+      else
+        [[ ${input} =~ ^[0-9.]*$ ]] && (( ${#input} < length ))
+      fi
+    ;;
+  esac
+  return
+}
+
 checkPid () {
   PID_ALIVE=0
   kill -0 $1 &> /dev/null
@@ -792,23 +829,28 @@ menuSelect () {
   do
     case ${opt} in
       A)
+        [[ ${OPTARG} == amd64 || ${OPTARG} == x86 ]] || die "Invalid profile: ${OPTARG}, one of hardened or vanilla" '2'
         BUILD_ARCH="${OPTARG}"
       ;;
       K)
+        validatIn dec "${OPTARG}" || die "Invalid kernel value" '2'
         TARGET_KERNEL="${OPTARG}"
       ;;
       N)
+        validatIn alphanum "${OPTARG}" 10 || die "Invalid name: ${OPTARG} must be alphanumeric and less than 10 characters" '2'
         BUILD_NAME="${OPTARG}"
       ;;
       P)
+        [[ ${OPTARG} == hardened || ${OPTARG} == vanilla ]] || die "Invalid profile: ${OPTARG}, one of hardened or vanilla" '2'
         BASE_PROFILE="${OPTARG}"
       ;;
       R)
+        validatIn num "${OPTARG}" 8 || die "Invalid format: ${OPTARG}, should look something like: ${DATE_SUFFIX}" '2'
         PORTAGE_SNAPSHOT="${OPTARG}" 
         TAKE_SNAPSHOT='0'
-        [[ ${PORTAGE_SNAPSHOT} =~ ^[0-9]+$ ]] || die "Invalid format: ${PORTAGE_SNAPSHOT}, should look something like: ${DATE_SUFFIX}" '2'
       ;;
       S)
+        ( (( OPTARG <= 4 && OPTARG > 0 )) || [[ ${OPTARG} == all ]] ) || die "Invalid stage selection: ${OPTARG}" '2'
         [[ -z ${BUILD_TARGET_STAGE} ]] && BUILD_TARGET_STAGE="${OPTARG}"
       ;;
       T)
@@ -837,6 +879,7 @@ menuSelect () {
         esac
       ;;
       V)
+        validatIn num "${OPTARG}" 8 || die "Invalid format: ${OPTARG}, should look something like: ${DATE_SUFFIX}" '2'
         BUILD_VERSION="${OPTARG}"
       ;;
       a)
