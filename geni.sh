@@ -150,7 +150,7 @@ validatIn () {
       then
         [[ ${input} =~ ^[a-zA-Z0-9_-]*$ ]]
       else
-        [[ ${input} =~ ^[a-zA-Z0-9_-]*$ ]] && (( ${#input} < length ))
+        [[ ${input} =~ ^[a-zA-Z0-9_-]*$ ]] && (( ${#input} <= length ))
       fi
     ;;
     num)
@@ -158,7 +158,7 @@ validatIn () {
       then
         [[ ${input} =~ ^[0-9]*$ ]]
       else
-        [[ ${input} =~ ^[0-9]*$ ]] && (( ${#input} < length ))
+        [[ ${input} =~ ^[0-9]*$ ]] && (( ${#input} <= length ))
       fi
     ;;
     dec)
@@ -166,7 +166,7 @@ validatIn () {
       then
         [[ ${input} =~ ^[0-9.]*$ ]]
       else
-        [[ ${input} =~ ^[0-9.]*$ ]] && (( ${#input} < length ))
+        [[ ${input} =~ ^[0-9.]*$ ]] && (( ${#input} <= length ))
       fi
     ;;
   esac
